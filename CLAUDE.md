@@ -8,11 +8,11 @@ traducir documentos, etc). Cada herramienta es una ruta propia.
 ## Stack
 - Next.js (App Router) + TypeScript
 - Tailwind CSS
-- Estructura: cada herramienta = carpeta en src/app/<nombre>/
+- Estructura: cada herramienta = carpeta en app/<nombre>/
 
 ## Convenciones
 - Componentes interactivos usan "use client"
-- La lógica de backend va en src/app/api/<nombre>/route.ts
+- La lógica de backend va en app/api/<nombre>/route.ts
 - Las specs viven en /specs/<nombre>.md
 
 ## Reglas
