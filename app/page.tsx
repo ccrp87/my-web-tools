@@ -25,6 +25,12 @@ const TOOLS: readonly Tool[] = [
     description:
       "Sube un video y extrae su audio en el formato y calidad que elijas.",
   },
+  {
+    href: "/vacaciones",
+    name: "Calculadora de vacaciones",
+    description:
+      "Calcula tu fecha de reintegro, aprovecha los festivos de Colombia y genera el texto para tu solicitud.",
+  },
 ];
 
 export default function Home() {
