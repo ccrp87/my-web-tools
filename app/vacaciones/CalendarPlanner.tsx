@@ -1,14 +1,17 @@
-import { makeLocalDate, toISODate, todayLocalDate } from "./lib/dates";
+import { addDays, makeLocalDate, toISODate, todayLocalDate } from "./lib/dates";
 import { formatMonthYear } from "./lib/format";
 import { isWorkday, type VacationPlan } from "./lib/planner";
+import { weekOverlapsHighSeason, type SeasonWindow } from "./lib/temporadas";
 
 interface CalendarPlannerProps {
   plan: VacationPlan;
   holidays: ReadonlyMap<string, string>;
+  seasonWindows: readonly SeasonWindow[];
 }
 
 const WEEKDAY_LABELS: readonly string[] = ["L", "M", "M", "J", "V", "S", "D"];
 const MAX_MONTHS_SHOWN = 5;
+const DAYS_PER_WEEK = 7;
 
 interface DayCell {
   key: string;
@@ -21,16 +24,23 @@ interface DayCell {
   isToday: boolean;
 }
 
-function buildMonthCells(
+interface WeekRow {
+  key: string;
+  monday: Date;
+  cells: DayCell[];
+}
+
+function buildMonthWeeks(
   monthStart: Date,
   plan: VacationPlan,
   holidays: ReadonlyMap<string, string>,
   todayISO: string,
-): DayCell[] {
+): WeekRow[] {
   const year = monthStart.getFullYear();
   const month = monthStart.getMonth();
   const totalDays = makeLocalDate(year, month + 1, 0).getDate();
   const leadingBlanks = (makeLocalDate(year, month, 1).getDay() + 6) % 7;
+  const firstGridMonday = addDays(makeLocalDate(year, month, 1), -leadingBlanks);
 
   const cells: DayCell[] = Array.from({ length: leadingBlanks }, (_, index) => ({
     key: `blank-${index}`,
@@ -59,12 +69,37 @@ function buildMonthCells(
     });
   }
 
-  return cells;
+  const trailingBlanks = (DAYS_PER_WEEK - (cells.length % DAYS_PER_WEEK)) % DAYS_PER_WEEK;
+  for (let index = 0; index < trailingBlanks; index += 1) {
+    cells.push({
+      key: `blank-end-${index}`,
+      day: null,
+      iso: null,
+      isInRest: false,
+      isWorkdaySpent: false,
+      isHoliday: false,
+      holidayName: undefined,
+      isToday: false,
+    });
+  }
+
+  const weeks: WeekRow[] = [];
+  for (let index = 0; index < cells.length; index += DAYS_PER_WEEK) {
+    const weekIndex = index / DAYS_PER_WEEK;
+    weeks.push({
+      key: `week-${weekIndex}`,
+      monday: addDays(firstGridMonday, weekIndex * DAYS_PER_WEEK),
+      cells: cells.slice(index, index + DAYS_PER_WEEK),
+    });
+  }
+
+  return weeks;
 }
 
 export function CalendarPlanner({
   plan,
   holidays,
+  seasonWindows,
 }: CalendarPlannerProps): React.JSX.Element {
   const todayISO = toISODate(todayLocalDate());
   const firstMonth = makeLocalDate(
@@ -87,11 +122,13 @@ export function CalendarPlanner({
     makeLocalDate(firstMonth.getFullYear(), firstMonth.getMonth() + index, 1),
   );
 
+  const hasSeasonWindows = seasonWindows.length > 0;
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-4">
         {months.map((month) => {
-          const cells = buildMonthCells(month, plan, holidays, todayISO);
+          const weeks = buildMonthWeeks(month, plan, holidays, todayISO);
           return (
             <div
               key={toISODate(month)}
@@ -109,26 +146,45 @@ export function CalendarPlanner({
                     {label}
                   </div>
                 ))}
-                {cells.map((cell) => (
-                  <div
-                    key={cell.key}
-                    title={cell.holidayName}
-                    className={`relative flex aspect-square items-center justify-center rounded-sm text-xs ${
-                      cell.day === null
-                        ? ""
-                        : cell.isWorkdaySpent
-                          ? "bg-amber-500 font-semibold text-amber-950"
-                          : cell.isInRest
-                            ? "bg-amber-100 font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-200"
-                            : "bg-black/[.02] text-zinc-500 dark:bg-white/[.04] dark:text-zinc-400"
-                    } ${cell.isToday ? "ring-1 ring-inset ring-black dark:ring-white" : ""}`}
-                  >
-                    {cell.day}
-                    {cell.isHoliday && (
-                      <span className="absolute bottom-0.5 left-1/2 h-[3px] w-[3px] -translate-x-1/2 rounded-full bg-amber-700 dark:bg-amber-300" />
-                    )}
-                  </div>
-                ))}
+              </div>
+              <div className="flex flex-col gap-0.5">
+                {weeks.map((week) => {
+                  const isHighSeasonWeek =
+                    hasSeasonWindows && weekOverlapsHighSeason(week.monday, seasonWindows);
+                  return (
+                    <div
+                      key={week.key}
+                      className={`rounded-sm pb-1 ${
+                        isHighSeasonWeek
+                          ? "border-b-2 border-indigo-500 dark:border-indigo-400"
+                          : ""
+                      }`}
+                    >
+                      <div className="grid grid-cols-7 gap-0.5">
+                        {week.cells.map((cell) => (
+                          <div
+                            key={cell.key}
+                            title={cell.holidayName}
+                            className={`relative flex aspect-square items-center justify-center rounded-sm text-xs ${
+                              cell.day === null
+                                ? ""
+                                : cell.isWorkdaySpent
+                                  ? "bg-amber-500 font-semibold text-amber-950"
+                                  : cell.isInRest
+                                    ? "bg-amber-100 font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+                                    : "bg-black/[.02] text-zinc-500 dark:bg-white/[.04] dark:text-zinc-400"
+                            } ${cell.isToday ? "ring-1 ring-inset ring-black dark:ring-white" : ""}`}
+                          >
+                            {cell.day}
+                            {cell.isHoliday && (
+                              <span className="absolute bottom-0.5 left-1/2 h-[3px] w-[3px] -translate-x-1/2 rounded-full bg-amber-700 dark:bg-amber-300" />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           );
@@ -152,6 +208,12 @@ export function CalendarPlanner({
           <i className="inline-block h-2.5 w-2.5 rounded-full bg-amber-700 dark:bg-amber-300" />
           El punto marca festivo
         </span>
+        {hasSeasonWindows && (
+          <span className="inline-flex items-center gap-1.5">
+            <i className="inline-block h-2.5 w-2.5 border-b-2 border-indigo-500 dark:border-indigo-400" />
+            La banda marca semana en temporada alta
+          </span>
+        )}
       </p>
     </div>
   );

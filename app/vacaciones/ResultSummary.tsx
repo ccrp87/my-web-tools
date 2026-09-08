@@ -1,10 +1,14 @@
 import { addDays } from "./lib/dates";
+import type { RegionalFair } from "./lib/ferias";
 import { formatLongDate, formatShortDate } from "./lib/format";
 import { firstWorkdayOnOrAfter, isWorkday, type VacationPlan } from "./lib/planner";
+import { getPredominantSeason, type SeasonDayBreakdown } from "./lib/temporadas";
 
 interface ResultSummaryProps {
   plan: VacationPlan | null;
   holidays: ReadonlyMap<string, string>;
+  seasonBreakdown: SeasonDayBreakdown | null;
+  regionalFairs: readonly RegionalFair[];
 }
 
 interface Metric {
@@ -16,6 +20,8 @@ interface Metric {
 export function ResultSummary({
   plan,
   holidays,
+  seasonBreakdown,
+  regionalFairs,
 }: ResultSummaryProps): React.JSX.Element {
   if (!plan) {
     return (
@@ -107,6 +113,44 @@ export function ResultSummary({
             </p>
           ))}
         </div>
+      )}
+
+      {seasonBreakdown && seasonBreakdown.totalDays > 0 && (
+        <p className="rounded-r-lg border-l-4 border-indigo-500 bg-indigo-50 px-3 py-2 text-sm text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200">
+          {(() => {
+            const predominance = getPredominantSeason(seasonBreakdown);
+            const summary =
+              predominance === "mixto"
+                ? `Tu periodo se reparte entre temporada alta (${seasonBreakdown.altaDays} días) y temporada baja (${seasonBreakdown.bajaDays} días).`
+                : predominance === "alta"
+                  ? `Tu periodo cae sobre todo en temporada alta de viajes en Colombia (${seasonBreakdown.altaDays} de ${seasonBreakdown.totalDays} días): vuelos y hoteles suelen ser más caros y con más demanda.`
+                  : `Tu periodo cae sobre todo en temporada baja de viajes en Colombia (${seasonBreakdown.bajaDays} de ${seasonBreakdown.totalDays} días): suele haber más disponibilidad y mejores precios.`;
+            const windowNames = seasonBreakdown.matchedWindows.map((w) => w.label).join(", ");
+            return (
+              <>
+                {summary}
+                {windowNames && ` (${windowNames})`}{" "}
+                <span className="opacity-80">
+                  Es una convención comercial del sector turístico, no una
+                  fecha oficial fija.
+                </span>
+              </>
+            );
+          })()}
+        </p>
+      )}
+
+      {regionalFairs.length > 0 && (
+        <p className="rounded-r-lg border-l-4 border-zinc-400 bg-zinc-100 px-3 py-2 text-sm text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+          Tu periodo coincide con{" "}
+          {regionalFairs
+            .map(
+              (fair) =>
+                `${fair.name} en ${fair.city}${fair.approximate ? " (fecha aproximada)" : ""}`,
+            )
+            .join(", ")}
+          . Solo afecta precios y ocupación en esa ciudad.
+        </p>
       )}
     </div>
   );

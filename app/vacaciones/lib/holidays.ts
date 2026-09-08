@@ -8,9 +8,10 @@ export interface Holiday {
 /**
  * Calcula el domingo de Pascua para un año dado (algoritmo de
  * Meeus/Jones/Butcher). A partir de esta fecha se derivan los festivos
- * móviles de Semana Santa y Corpus Christi.
+ * móviles de Semana Santa y Corpus Christi, y la ventana de temporada
+ * alta de Semana Santa (ver lib/temporadas.ts).
  */
-function calculateEasterSunday(year: number): Date {
+export function getEasterSunday(year: number): Date {
   const a = year % 19;
   const b = Math.floor(year / 100);
   const c = year % 100;
@@ -36,7 +37,7 @@ function nextMonday(date: Date): Date {
 
 /** Festivos oficiales de Colombia para un año determinado. */
 export function getColombianHolidays(year: number): Holiday[] {
-  const easterSunday = calculateEasterSunday(year);
+  const easterSunday = getEasterSunday(year);
   const holidayDates: ReadonlyArray<readonly [Date, string]> = [
     [makeLocalDate(year, 0, 1), "Año Nuevo"],
     [makeLocalDate(year, 4, 1), "Día del Trabajo"],

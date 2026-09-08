@@ -118,17 +118,17 @@ export function buildVacationPlan(
 }
 
 /**
- * Propone fechas de inicio alternativas, dentro de una ventana de búsqueda,
- * que aprovechen mejor los fines de semana y festivos cercanos. Las fechas
- * elegidas se separan entre sí para no repetir la misma semana, y la fecha
- * actual del usuario siempre se incluye para poder compararla.
+ * Genera y ordena por conveniencia todas las fechas de inicio candidatas
+ * dentro de la ventana de búsqueda, sin recortarlas ni separarlas. Es la
+ * base tanto de `suggestBetterStartDates` como de cualquier agrupación
+ * adicional (por ejemplo, por temporada) que necesite ver el conjunto
+ * completo antes de elegir.
  */
-export function suggestBetterStartDates(
+export function rankCandidateStartDates(
   baseISO: string,
   requestedDays: number,
   mode: VacationCountMode,
   holidays: ReadonlyMap<string, string>,
-  current: VacationPlan | null,
 ): VacationPlan[] {
   const from = parseISODate(baseISO);
   const candidates: VacationPlan[] = [];
@@ -153,16 +153,48 @@ export function suggestBetterStartDates(
       a.start.getTime() - b.start.getTime(),
   );
 
+  return candidates;
+}
+
+/**
+ * Elige, en orden, hasta `maxCount` candidatas que estén separadas entre sí
+ * por más de `minGapDays` días (para no repetir la misma semana varias veces).
+ */
+export function pickSeparatedTopCandidates(
+  candidates: readonly VacationPlan[],
+  maxCount: number,
+  minGapDays: number,
+): VacationPlan[] {
   const picks: VacationPlan[] = [];
   for (const candidate of candidates) {
     const isFarEnoughFromPicks = picks.every(
-      (pick) =>
-        Math.abs(diffInDays(pick.start, candidate.start)) >
-        MIN_DAYS_BETWEEN_SUGGESTIONS,
+      (pick) => Math.abs(diffInDays(pick.start, candidate.start)) > minGapDays,
     );
     if (isFarEnoughFromPicks) picks.push(candidate);
-    if (picks.length === MAX_SUGGESTIONS) break;
+    if (picks.length === maxCount) break;
   }
+  return picks;
+}
+
+/**
+ * Propone fechas de inicio alternativas, dentro de una ventana de búsqueda,
+ * que aprovechen mejor los fines de semana y festivos cercanos. Las fechas
+ * elegidas se separan entre sí para no repetir la misma semana, y la fecha
+ * actual del usuario siempre se incluye para poder compararla.
+ */
+export function suggestBetterStartDates(
+  baseISO: string,
+  requestedDays: number,
+  mode: VacationCountMode,
+  holidays: ReadonlyMap<string, string>,
+  current: VacationPlan | null,
+): VacationPlan[] {
+  const candidates = rankCandidateStartDates(baseISO, requestedDays, mode, holidays);
+  const picks = pickSeparatedTopCandidates(
+    candidates,
+    MAX_SUGGESTIONS,
+    MIN_DAYS_BETWEEN_SUGGESTIONS,
+  );
 
   if (
     current &&
