@@ -31,6 +31,12 @@ const TOOLS: readonly Tool[] = [
     description:
       "Calcula tu fecha de reintegro, aprovecha los festivos de Colombia y genera el texto para tu solicitud.",
   },
+  {
+    href: "/farmacia",
+    name: "Comparador de precios de droguerías",
+    description:
+      "Compara precio y disponibilidad de un medicamento entre varias droguerías colombianas. Requiere inicio de sesión.",
+  },
 ];
 
 export default function Home() {
