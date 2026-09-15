@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import {
   NOMBRE_COOKIE_SESION,
   verificarTokenSesion,
-} from "./app/farmacia/lib/autenticacion";
+} from "./app/masbarato/lib/autenticacion";
 
 export function proxy(request: NextRequest): NextResponse {
   const secreto = process.env.FARMACIA_SESSION_SECRET;
@@ -14,17 +14,17 @@ export function proxy(request: NextRequest): NextResponse {
     return NextResponse.next();
   }
 
-  if (request.nextUrl.pathname.startsWith("/api/farmacia")) {
+  if (request.nextUrl.pathname.startsWith("/api/masbarato")) {
     return NextResponse.json({ error: "no autenticado" }, { status: 401 });
   }
 
-  return NextResponse.redirect(new URL("/farmacia/login", request.url));
+  return NextResponse.redirect(new URL("/masbarato/login", request.url));
 }
 
 export const config = {
   matcher: [
-    "/farmacia",
-    "/farmacia/((?!login).*)",
-    "/api/farmacia/((?!login|logout|diagnostico).*)",
+    "/masbarato",
+    "/masbarato/((?!login).*)",
+    "/api/masbarato/((?!login|logout|diagnostico).*)",
   ],
 };
