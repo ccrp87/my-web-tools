@@ -99,6 +99,59 @@ anónimo dispare ese tráfico desde la app.
 7. Un botón de "Cerrar sesión" visible en la propia página de la
    herramienta.
 
+## Búsqueda mejorada con IA (opt-in, beta)
+Cada adaptador filtra localmente los resultados que no contienen todas las
+palabras significativas del término (`esRelevante` en cada adaptador,
+ver tabla de tiendas), porque el buscador remoto (Algolia, autocompletado,
+etc.) puede aflojar la búsqueda y devolver productos sin relación real —
+pero ese filtro exige coincidencia de texto **literal**, así que también
+descarta coincidencias genuinas con otra forma (género/número/sinónimo:
+"paños húmedos" en el término vs. "Toallitas Húmedas" en el nombre real
+del producto — bug confirmado en vivo contra Farmatodo). El modo IA
+reemplaza ese filtro de texto por uno de similitud semántica, corrido
+enteramente en el navegador del usuario, no en el servidor.
+
+- **Opt-in, apagado por defecto**: un switch "Búsqueda mejorada con IA
+  (beta)" en el panel de búsqueda. El usuario decide activarlo; la
+  elección se guarda en `localStorage` (`masbarato:modoIA`) y persiste
+  entre visitas (`ComparadorPrecios.tsx`, con `useSyncExternalStore` para
+  evitar parpadeo de hidratación — mismo patrón que `ThemeToggle`).
+- **Servidor**: cuando el cliente manda `modoIA: true` en el body de
+  `POST /api/masbarato/buscar`, la ruta ignora el `limite` pedido y usa
+  uno fijo más grande (`LIMITE_MAXIMO_IA = 20`) y pasa `{ crudo: true }`
+  a `crearFlujoBusqueda` → cada adaptador. Con `crudo: true`, el
+  adaptador se salta su filtro de texto literal y devuelve los
+  candidatos tal cual los ordenó la tienda (`Adaptador.buscar` acepta un
+  tercer parámetro opcional `OpcionesBusqueda`, ver
+  `adaptadores/tipos.ts`). Excepción: en Cruz Verde el tope de
+  candidatos sale del propio `limite` (no hay un tope fijo aparte), así
+  que ahí el modo IA también implica más llamadas HTTP para traer la
+  imagen de cada candidato adicional — un tradeoff conocido, no un bug.
+  La caché de cada tienda distingue modo crudo de modo filtrado (mismo
+  término/límite, resultados distintos) para no pisarse entre sí.
+- **Cliente**: por cada evento NDJSON que llega (uno por tienda), si
+  `modoIA` está activo, `rerankearPorSimilitud` (`lib/ia/similitud.ts`)
+  calcula un embedding del término buscado y de cada candidato
+  (`marca + nombre`) con un modelo que corre en el propio navegador vía
+  `@xenova/transformers` (ya usado en `transcribir-audio`), descarta los
+  que no llegan a un umbral mínimo de similitud coseno y ordena de mayor
+  a menor antes de recortar a los `limite` que el usuario pidió — ese
+  recorte final sigue siendo el número que el usuario eligió en
+  "Resultados por tienda" (3/5/10), no el `LIMITE_MAXIMO_IA` interno.
+- **Modelo**: `Xenova/paraphrase-multilingual-MiniLM-L12-v2` (~120 MB,
+  incluye español), se descarga una sola vez por sesión del navegador y
+  queda en caché del propio `@xenova/transformers` entre búsquedas y
+  visitas — no se re-descarga a menos que el usuario limpie datos del
+  sitio. Mientras descarga, se muestra una barra de progreso (mismo
+  patrón visual que `AudioTranscriber.tsx`).
+- **Por qué no todas las tiendas se benefician igual**: en adaptadores
+  cuyo índice está ordenado por precio y no por relevancia (Alkosto), un
+  término sin coincidencias reales puede devolver productos baratos de
+  cualquier categoría — antes se descartaban por el filtro literal
+  (correcto ahí, ver comentario en `alkosto.ts`); en modo IA ese filtro
+  se salta, pero el propio umbral de similitud semántica del cliente
+  cumple ese mismo rol de filtro, así que sigue siendo seguro saltarlo.
+
 ## Tiendas soportadas (adaptadores a portar)
 | Tienda | Tipo | Notas de la versión Python a preservar |
 |---|---|---|
@@ -129,11 +182,15 @@ porta: no tiene ninguna tienda real detrás todavía.
   `ThreadPoolExecutor` del CLI — un adaptador lento o caído no debe
   retrasar ni tumbar a los demás.
 - Caché: en memoria en el proceso del servidor (`Map<clave, {datos, ts}>`
-  con TTL de 3 horas, igual que `CACHE_TTL` en Python), no en disco. Es
+  con TTL de 30 minutos — el Python original usaba 3 horas, se acortó a
+  propósito para que los precios se sientan más frescos), no en disco. Es
   deliberado: en un entorno serverless el disco no persiste entre
   invocaciones, y para el volumen de esta herramienta interna una caché
   de proceso (que se vacía al reiniciar el servidor) es suficiente y
-  evita depender de una base de datos solo para esto.
+  evita depender de una base de datos solo para esto. Solo se cachean
+  respuestas exitosas: una con `error` (timeout, WAF, red) no se guarda,
+  para que la siguiente búsqueda reintente en vez de quedar mostrando
+  "sin resultados" hasta que expire el TTL.
 - Tipos TypeScript equivalentes a los `dataclass` de Python (`Resultado`,
   `RespuestaTienda`), reutilizados entre la API route y los componentes
   de UI.

@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { FormEvent } from "react";
 import { formatearPrecio } from "./lib/precio";
 import {
@@ -15,7 +21,34 @@ import {
   type CriterioOrden,
 } from "./lib/resultados";
 import type { EventoBusqueda } from "./lib/buscarTodas";
+import {
+  rerankearPorSimilitud,
+  type ModelDownloadProgress,
+} from "./lib/ia/similitud";
 import type { Resultado, RespuestaTienda } from "./lib/tipos";
+
+const CLAVE_MODO_IA = "masbarato:modoIA";
+const EVENTO_CAMBIO_MODO_IA = "masbarato-modo-ia-change";
+
+// Igual patrón que ThemeToggle: useSyncExternalStore evita el parpadeo de
+// hidratación (el server siempre "ve" false) y, a diferencia de leerlo en
+// un useEffect con setState, no dispara el lint de cascading renders.
+function leerModoIA(): boolean {
+  return window.localStorage.getItem(CLAVE_MODO_IA) === "1";
+}
+
+function suscribirModoIA(onStoreChange: () => void): () => void {
+  window.addEventListener("storage", onStoreChange);
+  window.addEventListener(EVENTO_CAMBIO_MODO_IA, onStoreChange);
+  return () => {
+    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener(EVENTO_CAMBIO_MODO_IA, onStoreChange);
+  };
+}
+
+function modoIAEnServidor(): boolean {
+  return false;
+}
 
 function precioPorUnidadTexto(r: Resultado): string | null {
   if (r.precio === null) {
@@ -50,7 +83,7 @@ function Imagen({ src, clase }: { src?: string; clase: string }): React.JSX.Elem
   );
 }
 
-const LIMITES_DISPONIBLES = [3, 5, 10] as const;
+const LIMITES_DISPONIBLES = [3, 5, 10, 30] as const;
 
 export function ComparadorPrecios(): React.JSX.Element {
   const [tiendas, setTiendas] = useState<string[]>([]);
@@ -71,8 +104,20 @@ export function ComparadorPrecios(): React.JSX.Element {
   const [categoriasExcluidas, setCategoriasExcluidas] = useState<Set<string>>(
     new Set(),
   );
+  const modoIA = useSyncExternalStore(
+    suscribirModoIA,
+    leerModoIA,
+    modoIAEnServidor,
+  );
+  const [progresoModelo, setProgresoModelo] =
+    useState<ModelDownloadProgress | null>(null);
 
   const solicitudActualRef = useRef<number>(0);
+
+  const alternarModoIA = useCallback((valor: boolean): void => {
+    window.localStorage.setItem(CLAVE_MODO_IA, valor ? "1" : "0");
+    window.dispatchEvent(new Event(EVENTO_CAMBIO_MODO_IA));
+  }, []);
 
   const alternarTienda = useCallback((tienda: string): void => {
     setTiendasExcluidas((prev) => {
@@ -85,6 +130,14 @@ export function ComparadorPrecios(): React.JSX.Element {
       return siguiente;
     });
   }, []);
+
+  const seleccionarTodasLasTiendas = useCallback((): void => {
+    setTiendasExcluidas(new Set());
+  }, []);
+
+  const deseleccionarTodasLasTiendas = useCallback((): void => {
+    setTiendasExcluidas(new Set(tiendas));
+  }, [tiendas]);
 
   const alternarCategoria = useCallback((categoria: string): void => {
     setCategoriasExcluidas((prev) => {
@@ -139,6 +192,7 @@ export function ComparadorPrecios(): React.JSX.Element {
       setErrorGeneral(null);
       setRespuestas({});
       setCategoriasExcluidas(new Set());
+      setProgresoModelo(null);
       setTiendasBuscadas(
         tiendasSeleccionadas.length > 0 ? tiendasSeleccionadas : tiendas,
       );
@@ -151,6 +205,7 @@ export function ComparadorPrecios(): React.JSX.Element {
             termino: terminoLimpio,
             limite,
             tiendas: tiendasSeleccionadas,
+            modoIA,
           }),
         });
 
@@ -191,9 +246,27 @@ export function ComparadorPrecios(): React.JSX.Element {
             buffer = buffer.slice(indiceSalto + 1);
             if (linea.trim()) {
               const evento = JSON.parse(linea) as EventoBusqueda;
+              // El servidor manda candidatos crudos (sin el filtro literal
+              // de cada adaptador, ver route.ts) cuando modoIA está
+              // activo; acá se recortan a `limite` re-rankeados por
+              // similitud semántica, en vez de por el orden que trajo la
+              // tienda. Requiere descargar el modelo la primera vez.
+              const resultados =
+                modoIA && evento.respuesta.resultados.length > 0
+                  ? await rerankearPorSimilitud(
+                      terminoLimpio,
+                      evento.respuesta.resultados,
+                      limite,
+                      setProgresoModelo,
+                    )
+                  : evento.respuesta.resultados;
+
+              if (solicitudActualRef.current !== idSolicitud) {
+                return;
+              }
               setRespuestas((prev) => ({
                 ...prev,
-                [evento.respuesta.tienda]: evento.respuesta,
+                [evento.respuesta.tienda]: { ...evento.respuesta, resultados },
               }));
             }
             indiceSalto = buffer.indexOf("\n");
@@ -209,7 +282,7 @@ export function ComparadorPrecios(): React.JSX.Element {
         }
       }
     },
-    [termino, limite, tiendas, tiendasExcluidas],
+    [termino, limite, tiendas, tiendasExcluidas, modoIA],
   );
 
   const listaRespuestas = Object.values(respuestas);
@@ -310,6 +383,29 @@ export function ComparadorPrecios(): React.JSX.Element {
           </div>
         </div>
 
+        <div className="flex flex-col gap-1.5 rounded-lg border border-black/[.08] p-3 dark:border-white/[.145]">
+          <label className="flex cursor-pointer items-center justify-between gap-3">
+            <span className="text-sm text-zinc-700 dark:text-zinc-300">
+              Búsqueda mejorada con IA{" "}
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                (beta)
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              checked={modoIA}
+              onChange={(e) => alternarModoIA(e.target.checked)}
+              className="h-4 w-4 rounded border-black/[.2] accent-amber-500 dark:border-white/[.3]"
+            />
+          </label>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            Compara el significado del nombre del producto, no solo el
+            texto exacto — encuentra más coincidencias, pero corre un
+            modelo en tu navegador (descarga ~120 MB la primera vez, luego
+            queda en caché) y hace la búsqueda más lenta.
+          </p>
+        </div>
+
         <button
           type="submit"
           disabled={buscando || !termino.trim() || seleccionVacia}
@@ -317,6 +413,21 @@ export function ComparadorPrecios(): React.JSX.Element {
         >
           {buscando ? "Comparando..." : "Comparar"}
         </button>
+
+        {modoIA && progresoModelo && (
+          <div className="flex flex-col gap-1.5">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-black/[.08] dark:bg-white/[.145]">
+              <div
+                className="h-full rounded-full bg-foreground transition-all"
+                style={{ width: `${progresoModelo.percentage}%` }}
+              />
+            </div>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+              Descargando modelo de IA — {progresoModelo.file}:{" "}
+              {progresoModelo.percentage}%
+            </span>
+          </div>
+        )}
 
         {tiendas.length > 0 && (
           <>
@@ -331,6 +442,22 @@ export function ComparadorPrecios(): React.JSX.Element {
                   ▾
                 </span>
               </summary>
+              <div className="mt-2 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={seleccionarTodasLasTiendas}
+                  className="text-xs font-medium text-amber-700 hover:underline dark:text-amber-400"
+                >
+                  Todas
+                </button>
+                <button
+                  type="button"
+                  onClick={deseleccionarTodasLasTiendas}
+                  className="text-xs font-medium text-amber-700 hover:underline dark:text-amber-400"
+                >
+                  Ninguna
+                </button>
+              </div>
               <div className="mt-2 flex flex-col gap-1.5">
                 {tiendas.map((tienda) => (
                   <label

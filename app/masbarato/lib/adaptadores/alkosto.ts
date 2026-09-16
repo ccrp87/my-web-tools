@@ -1,5 +1,5 @@
 import type { Resultado, RespuestaTienda } from "../tipos";
-import type { Adaptador } from "./tipos";
+import type { Adaptador, OpcionesBusqueda } from "./tipos";
 import {
   describirError,
   esErrorDeTimeout,
@@ -61,6 +61,14 @@ function precioAlkosto(hit: HitAlkosto): number | null {
  * problema que search-suggestions en Cruz Verde, ver cruzverde.ts). Con una
  * sola palabra no se filtra: ahí Algolia puede resolver sinónimos válidos
  * (ej. "televisor" -> "TV") que un filtro de texto literal descartaría.
+ *
+ * A diferencia de VTEX, aquí NO se cae a los hits sin filtrar cuando el
+ * filtro deja todo fuera: el índice está ordenado por precio, no por
+ * relevancia, así que "sin filtrar" son productos baratos de cualquier
+ * categoría, no candidatos plausibles — un vacío es la respuesta correcta.
+ * La excepción es el modo IA (`opciones.crudo`): ahí el cliente reemplaza
+ * este filtro de texto por su propio filtro de similitud semántica, que sí
+ * detecta y descarta esos productos sin relación.
  */
 function esRelevante(hit: HitAlkosto, palabras: string[]): boolean {
   const texto = `${hit.name_text_es ?? ""} ${hit.marca_text ?? ""}`.toLowerCase();
@@ -88,8 +96,13 @@ function parsearAlkosto(hit: HitAlkosto): Resultado {
 export function crearAdaptadorAlkosto(): Adaptador {
   return {
     tienda: TIENDA,
-    async buscar(termino: string, limite: number): Promise<RespuestaTienda> {
+    async buscar(
+      termino: string,
+      limite: number,
+      opciones: OpcionesBusqueda = {},
+    ): Promise<RespuestaTienda> {
       const { filtros } = tokenizarTermino(termino);
+      const { crudo = false } = opciones;
       const palabras = filtros.map((p) => p.toLowerCase());
       try {
         const respuesta = await fetchConTimeout(ENDPOINT, {
@@ -120,7 +133,9 @@ export function crearAdaptadorAlkosto(): Adaptador {
         const datos = (await respuesta.json()) as { hits?: HitAlkosto[] };
         const hits = datos.hits ?? [];
         const relevantes =
-          palabras.length > 0 ? hits.filter((h) => esRelevante(h, palabras)) : hits;
+          !crudo && palabras.length > 0
+            ? hits.filter((h) => esRelevante(h, palabras))
+            : hits;
 
         return {
           tienda: TIENDA,

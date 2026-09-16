@@ -1,5 +1,5 @@
 import type { Resultado, RespuestaTienda } from "../tipos";
-import type { Adaptador } from "./tipos";
+import type { Adaptador, OpcionesBusqueda } from "./tipos";
 import {
   cabecerasBase,
   describirError,
@@ -13,6 +13,13 @@ const TIENDA = "Cruz Verde";
 const BASE = "https://api.cruzverde.com.co/product-service/products";
 const ZONA = "COCV_zona70"; // Inventario por zona; cámbialo si compras en otra.
 const ORIGEN = "https://www.cruzverde.com.co";
+
+// search-suggestions responde HTTP 400 ("limit must not be greater than
+// 10") por encima de este valor — confirmado en vivo con el modo IA, que
+// pide un `limite` más grande (20) que rompía la búsqueda por completo en
+// vez de simplemente traer menos candidatos. A diferencia de las demás
+// tiendas, acá no hay forma de pedir más de 10 candidatos crudos.
+const LIMITE_MAXIMO_SUGERENCIAS = 10;
 
 // Sesión de invitado: este endpoint devuelve {"authType": "guest", ...} y
 // con él la cookie connect.sid.
@@ -139,7 +146,13 @@ function precioCruzVerde(d: DetalleProductoCruzVerde): number | null {
  * puede devolver productos sin ninguna relación real (ej. "aceite de oliva"
  * corrige "aceite" a "active" y sugiere protector solar). Se descartan acá
  * los que no contengan, al menos, todas las palabras significativas del
- * término buscado.
+ * término buscado. Con `opciones.crudo` (modo IA) no se descarta nada acá:
+ * el cliente filtra por similitud semántica en vez de texto literal. Ojo:
+ * `search-suggestions` nunca trae más de `LIMITE_MAXIMO_SUGERENCIAS`
+ * candidatos (ver esa constante), así que el modo IA tiene menos margen
+ * en esta tienda que en las demás (subir ese tope implicaría además pedir
+ * la imagen de cada candidato adicional por separado, una llamada HTTP
+ * por producto).
  */
 function esRelevante(d: DetalleProductoCruzVerde, palabras: string[]): boolean {
   const texto = `${d.name ?? ""} ${d.brand ?? ""}`.toLowerCase();
@@ -214,7 +227,12 @@ async function obtenerImagenProducto(
 export function crearAdaptadorCruzVerde(): Adaptador {
   return {
     tienda: TIENDA,
-    async buscar(termino: string, limite: number): Promise<RespuestaTienda> {
+    async buscar(
+      termino: string,
+      limite: number,
+      opciones: OpcionesBusqueda = {},
+    ): Promise<RespuestaTienda> {
+      const { crudo = false } = opciones;
       try {
         let cookie = await abrirSesion();
 
@@ -222,7 +240,7 @@ export function crearAdaptadorCruzVerde(): Adaptador {
           fetchConTimeout(
             `${BASE}/search-suggestions?${new URLSearchParams({
               q: termino,
-              limit: String(Math.max(limite, 10)),
+              limit: String(Math.min(Math.max(limite, 10), LIMITE_MAXIMO_SUGERENCIAS)),
             })}`,
             { headers: cabecerasCruzVerde(cookie) },
           );
@@ -272,7 +290,7 @@ export function crearAdaptadorCruzVerde(): Adaptador {
         const ids = sugeridos
           .map((p) => p.productId)
           .filter((id): id is string => Boolean(id))
-          .slice(0, Math.max(limite, 10));
+          .slice(0, Math.min(Math.max(limite, 10), LIMITE_MAXIMO_SUGERENCIAS));
 
         if (ids.length === 0) {
           return { tienda: TIENDA, resultados: [] };
@@ -309,7 +327,7 @@ export function crearAdaptadorCruzVerde(): Adaptador {
         );
         const idsConDetalle = ids.filter((id) => id in detalles);
         const idsRelevantes =
-          palabras.length > 0
+          !crudo && palabras.length > 0
             ? idsConDetalle.filter((id) => esRelevante(detalles[id], palabras))
             : idsConDetalle;
 

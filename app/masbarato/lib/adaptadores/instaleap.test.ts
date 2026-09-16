@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parsearPayloadFlight, parsearProducto } from "./instaleap";
+import {
+  crearAdaptadorInstaleap,
+  parsearPayloadFlight,
+  parsearProducto,
+} from "./instaleap";
 
 const TIENDA = "La Economía";
 const ORIGEN = "https://www.droguerialaeconomia.com";
@@ -88,5 +92,27 @@ describe("parsearPayloadFlight + parsearProducto", () => {
     expect(
       parsearProducto(producto, mapa, TIENDA, ORIGEN).categoria,
     ).toBeUndefined();
+  });
+});
+
+describe("crearAdaptadorInstaleap", () => {
+  it("con opciones.crudo no aplica el filtro local de palabras significativas", async () => {
+    const payload = [
+      'p1:{"name":"Producto sin relación alguna","sku":"1","price":5000,"index":0}',
+    ].join("\n");
+    const obtener = async () => ({ status: 200, texto: async () => payload });
+
+    const adaptador = crearAdaptadorInstaleap({
+      tienda: TIENDA,
+      origen: ORIGEN,
+      obtener,
+      esTimeout: () => false,
+    });
+
+    const filtrado = await adaptador.buscar("paños húmedos", 10);
+    const crudo = await adaptador.buscar("paños húmedos", 10, { crudo: true });
+
+    expect(filtrado.resultados).toHaveLength(0);
+    expect(crudo.resultados).toHaveLength(1);
   });
 });

@@ -1,4 +1,4 @@
-export const CACHE_TTL_MS = 1000 * 60 * 60 * 3; // 3 horas: los precios no cambian cada minuto.
+export const CACHE_TTL_MS = 1000 * 60 * 30; // 30 min: balance entre precios frescos y no saturar las tiendas.
 
 export interface Cache<T> {
   leer(clave: string, ahora?: number): T | null;

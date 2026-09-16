@@ -133,6 +133,32 @@ describe("adaptador Alkosto", () => {
     }
   });
 
+  it("con opciones.crudo no descarta hits sin relación literal (los deja para el filtro semántico del modo IA)", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          hits: [
+            {
+              name_text_es: "Copa Melamina FREE HOME Larga 20 cm",
+              pricevalue_cop_double: 5340,
+              instockflag_boolean: true,
+            },
+          ],
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+
+    try {
+      const resultado = await crearAdaptadorAlkosto().buscar("winny pants 5", 10, {
+        crudo: true,
+      });
+      expect(resultado.resultados).toHaveLength(1);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   it("usa pricevalue_cop_double cuando no hay descuento", async () => {
     const original = globalThis.fetch;
     globalThis.fetch = (async () =>

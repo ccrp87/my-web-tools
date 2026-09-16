@@ -1,6 +1,6 @@
 import type { Resultado, RespuestaTienda } from "../tipos";
 import type { Presentacion, UnidadBase } from "../presentacion";
-import type { Adaptador } from "./tipos";
+import type { Adaptador, OpcionesBusqueda } from "./tipos";
 import {
   cabecerasBase,
   describirError,
@@ -136,10 +136,16 @@ export function crearAdaptadorVtex(tienda: string, baseUrl: string): Adaptador {
 
   return {
     tienda,
-    async buscar(termino: string, limite: number): Promise<RespuestaTienda> {
+    async buscar(
+      termino: string,
+      limite: number,
+      opciones: OpcionesBusqueda = {},
+    ): Promise<RespuestaTienda> {
       const { clave, filtros } = tokenizarTermino(termino);
-      // Si hay que filtrar en local, se pide un lote más grande.
-      const tope = filtros.length > 0 ? 49 : Math.max(0, limite - 1);
+      const { crudo = false } = opciones;
+      // Si hay que filtrar en local (o el modo IA quiere candidatos crudos
+      // para re-rankear), se pide un lote más grande.
+      const tope = crudo || filtros.length > 0 ? 49 : Math.max(0, limite - 1);
       const params = new URLSearchParams({
         ft: clave,
         _from: "0",
@@ -180,7 +186,7 @@ export function crearAdaptadorVtex(tienda: string, baseUrl: string): Adaptador {
           parsearProducto(tienda, base, p),
         );
 
-        if (filtros.length > 0) {
+        if (!crudo && filtros.length > 0) {
           const filtrosMinuscula = filtros.map((f) => f.toLowerCase());
           const coinciden = productos.filter(({ textoBusqueda }) =>
             filtrosMinuscula.every((f) => textoBusqueda.includes(f)),

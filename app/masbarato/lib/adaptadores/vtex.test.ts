@@ -114,4 +114,35 @@ describe("adaptador VTEX", () => {
       restaurar();
     }
   });
+
+  it("con opciones.crudo no aplica el filtro local de palabras significativas", async () => {
+    const restaurar = mockearFetch([
+      {
+        productName: "Paños Húmedos Marca X x 100 und",
+        items: [
+          { sellers: [{ commertialOffer: { Price: 12000, AvailableQuantity: 5 } }] },
+        ],
+      },
+      {
+        productName: "Producto sin relación alguna",
+        items: [
+          { sellers: [{ commertialOffer: { Price: 5000, AvailableQuantity: 5 } }] },
+        ],
+      },
+    ]);
+
+    try {
+      const adaptador = crearAdaptadorVtex("Éxito", "https://www.exito.com/io");
+      const filtrado = await adaptador.buscar("paños húmedos", 10);
+      const crudo = await adaptador.buscar("paños húmedos", 10, { crudo: true });
+
+      // En modo normal, como sí hay un match literal, el que no tiene
+      // relación se descarta (no aplica el "fallback a sin filtrar", que
+      // solo entra cuando NINGÚN candidato coincide).
+      expect(filtrado.resultados).toHaveLength(1);
+      expect(crudo.resultados).toHaveLength(2);
+    } finally {
+      restaurar();
+    }
+  });
 });

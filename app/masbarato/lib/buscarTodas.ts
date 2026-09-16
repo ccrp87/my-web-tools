@@ -1,5 +1,5 @@
 import { TIENDAS } from "./adaptadores/tiendas";
-import type { Adaptador } from "./adaptadores/tipos";
+import type { Adaptador, OpcionesBusqueda } from "./adaptadores/tipos";
 import type { Cache } from "./cache";
 import type { RespuestaTienda } from "./tipos";
 
@@ -8,8 +8,16 @@ export interface EventoBusqueda {
   deCache: boolean;
 }
 
-function claveCache(tienda: string, termino: string, limite: number): string {
-  return `${tienda}|${termino.toLowerCase()}|${limite}`;
+// El modo crudo (IA) devuelve candidatos distintos a los del modo normal
+// para el mismo término/límite: hay que cachearlos aparte, si no una
+// búsqueda pisaría el resultado de la otra.
+function claveCache(
+  tienda: string,
+  termino: string,
+  limite: number,
+  crudo: boolean,
+): string {
+  return `${tienda}|${termino.toLowerCase()}|${limite}|${crudo ? "crudo" : "filtrado"}`;
 }
 
 export async function buscarEnTienda(
@@ -17,8 +25,9 @@ export async function buscarEnTienda(
   termino: string,
   limite: number,
   cache: Cache<RespuestaTienda>,
+  opciones: OpcionesBusqueda = {},
 ): Promise<EventoBusqueda> {
-  const clave = claveCache(adaptador.tienda, termino, limite);
+  const clave = claveCache(adaptador.tienda, termino, limite, Boolean(opciones.crudo));
   const cacheada = cache.leer(clave);
   if (cacheada) {
     return { respuesta: cacheada, deCache: true };
@@ -26,7 +35,7 @@ export async function buscarEnTienda(
 
   let respuesta: RespuestaTienda;
   try {
-    respuesta = await adaptador.buscar(termino, limite);
+    respuesta = await adaptador.buscar(termino, limite, opciones);
   } catch (error) {
     respuesta = {
       tienda: adaptador.tienda,
@@ -35,7 +44,12 @@ export async function buscarEnTienda(
     };
   }
 
-  cache.guardar(clave, respuesta);
+  // Un error (timeout, WAF, red) es casi siempre transitorio: cachearlo
+  // dejaría a la tienda mostrando "sin resultados" hasta por CACHE_TTL_MS
+  // aunque la siguiente petición sí hubiera funcionado.
+  if (!respuesta.error) {
+    cache.guardar(clave, respuesta);
+  }
   return { respuesta, deCache: false };
 }
 
@@ -49,6 +63,7 @@ export function crearFlujoBusqueda(
   limite: number,
   cache: Cache<RespuestaTienda>,
   tiendas: readonly Adaptador[] = TIENDAS,
+  opciones: OpcionesBusqueda = {},
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
 
@@ -56,7 +71,13 @@ export function crearFlujoBusqueda(
     async start(controller) {
       await Promise.all(
         tiendas.map(async (adaptador) => {
-          const evento = await buscarEnTienda(adaptador, termino, limite, cache);
+          const evento = await buscarEnTienda(
+            adaptador,
+            termino,
+            limite,
+            cache,
+            opciones,
+          );
           controller.enqueue(encoder.encode(`${JSON.stringify(evento)}\n`));
         }),
       );

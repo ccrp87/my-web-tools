@@ -1,5 +1,5 @@
 import type { Resultado, RespuestaTienda } from "../tipos";
-import type { Adaptador } from "./tipos";
+import type { Adaptador, OpcionesBusqueda } from "./tipos";
 import { TIMEOUT_MS, cabecerasBase, describirError, fetchConTimeout } from "./http";
 import { tokenizarTermino } from "./tokenizar";
 
@@ -103,6 +103,8 @@ function esProductoInstaleap(valor: unknown): valor is ProductoInstaleap {
  * problema que search-suggestions en Cruz Verde, ver cruzverde.ts). Solo se
  * filtra con 2+ palabras significativas: con una sola, un sinónimo válido
  * resuelto por el buscador remoto no debe descartarse por texto literal.
+ * Con `opciones.crudo` (modo IA) este filtro se salta por completo: el
+ * cliente hace su propio filtrado por similitud semántica.
  */
 function esRelevante(p: ProductoInstaleap, palabras: string[]): boolean {
   const texto = `${p.name} ${p.brand ?? ""}`.toLowerCase();
@@ -188,7 +190,12 @@ export function crearAdaptadorInstaleap(opciones: {
 
   return {
     tienda,
-    async buscar(termino: string, limite: number): Promise<RespuestaTienda> {
+    async buscar(
+      termino: string,
+      limite: number,
+      opciones: OpcionesBusqueda = {},
+    ): Promise<RespuestaTienda> {
+      const { crudo = false } = opciones;
       try {
         const respuesta = await obtener(
           `${origen}/search?${new URLSearchParams({ name: termino })}`,
@@ -209,7 +216,7 @@ export function crearAdaptadorInstaleap(opciones: {
         productos.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
 
         const { filtros } = tokenizarTermino(termino);
-        if (filtros.length > 0) {
+        if (!crudo && filtros.length > 0) {
           const palabras = filtros.map((p) => p.toLowerCase());
           productos = productos.filter((p) => esRelevante(p, palabras));
         }
