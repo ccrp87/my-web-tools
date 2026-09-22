@@ -1,5 +1,5 @@
 import type { Resultado, RespuestaTienda } from "../tipos";
-import type { Adaptador, OpcionesBusqueda } from "./tipos";
+import type { Adaptador } from "./tipos";
 import {
   cabecerasBase,
   describirError,
@@ -15,10 +15,11 @@ const ZONA = "COCV_zona70"; // Inventario por zona; cámbialo si compras en otra
 const ORIGEN = "https://www.cruzverde.com.co";
 
 // search-suggestions responde HTTP 400 ("limit must not be greater than
-// 10") por encima de este valor — confirmado en vivo con el modo IA, que
-// pide un `limite` más grande (20) que rompía la búsqueda por completo en
-// vez de simplemente traer menos candidatos. A diferencia de las demás
-// tiendas, acá no hay forma de pedir más de 10 candidatos crudos.
+// 10") por encima de este valor — confirmado en vivo: al subir el máximo
+// de "Resultados por tienda" a 30 en la UI, pedir ese `limite` directo
+// rompía la búsqueda por completo en vez de simplemente traer menos
+// candidatos. A diferencia de las demás tiendas, acá no hay forma de
+// pedir más de 10 candidatos.
 const LIMITE_MAXIMO_SUGERENCIAS = 10;
 
 // Sesión de invitado: este endpoint devuelve {"authType": "guest", ...} y
@@ -146,13 +147,7 @@ function precioCruzVerde(d: DetalleProductoCruzVerde): number | null {
  * puede devolver productos sin ninguna relación real (ej. "aceite de oliva"
  * corrige "aceite" a "active" y sugiere protector solar). Se descartan acá
  * los que no contengan, al menos, todas las palabras significativas del
- * término buscado. Con `opciones.crudo` (modo IA) no se descarta nada acá:
- * el cliente filtra por similitud semántica en vez de texto literal. Ojo:
- * `search-suggestions` nunca trae más de `LIMITE_MAXIMO_SUGERENCIAS`
- * candidatos (ver esa constante), así que el modo IA tiene menos margen
- * en esta tienda que en las demás (subir ese tope implicaría además pedir
- * la imagen de cada candidato adicional por separado, una llamada HTTP
- * por producto).
+ * término buscado.
  */
 function esRelevante(d: DetalleProductoCruzVerde, palabras: string[]): boolean {
   const texto = `${d.name ?? ""} ${d.brand ?? ""}`.toLowerCase();
@@ -227,12 +222,7 @@ async function obtenerImagenProducto(
 export function crearAdaptadorCruzVerde(): Adaptador {
   return {
     tienda: TIENDA,
-    async buscar(
-      termino: string,
-      limite: number,
-      opciones: OpcionesBusqueda = {},
-    ): Promise<RespuestaTienda> {
-      const { crudo = false } = opciones;
+    async buscar(termino: string, limite: number): Promise<RespuestaTienda> {
       try {
         let cookie = await abrirSesion();
 
@@ -327,7 +317,7 @@ export function crearAdaptadorCruzVerde(): Adaptador {
         );
         const idsConDetalle = ids.filter((id) => id in detalles);
         const idsRelevantes =
-          !crudo && palabras.length > 0
+          palabras.length > 0
             ? idsConDetalle.filter((id) => esRelevante(detalles[id], palabras))
             : idsConDetalle;
 

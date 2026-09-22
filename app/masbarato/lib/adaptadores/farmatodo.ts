@@ -1,5 +1,5 @@
 import type { Resultado, RespuestaTienda } from "../tipos";
-import type { Adaptador, OpcionesBusqueda } from "./tipos";
+import type { Adaptador } from "./tipos";
 import {
   cabecerasBase,
   describirError,
@@ -128,16 +128,11 @@ function parsearFarmatodo(hit: HitFarmatodo): Resultado {
 export function crearAdaptadorFarmatodo(): Adaptador {
   return {
     tienda: TIENDA,
-    async buscar(
-      termino: string,
-      limite: number,
-      opciones: OpcionesBusqueda = {},
-    ): Promise<RespuestaTienda> {
+    async buscar(termino: string, limite: number): Promise<RespuestaTienda> {
       const { filtros } = tokenizarTermino(termino);
-      const { crudo = false } = opciones;
       const palabras = filtros.map((p) => p.toLowerCase());
       const params = new URLSearchParams({
-        hitsPerPage: String(Math.max(limite, crudo || palabras.length > 0 ? 50 : 10)),
+        hitsPerPage: String(Math.max(limite, palabras.length > 0 ? 50 : 10)),
         filters: FILTROS,
         page: "0",
       });
@@ -171,9 +166,7 @@ export function crearAdaptadorFarmatodo(): Adaptador {
         };
         const hits = datos.results?.[0]?.hits ?? [];
         const coinciden =
-          !crudo && palabras.length > 0
-            ? hits.filter((h) => esRelevante(h, palabras))
-            : hits;
+          palabras.length > 0 ? hits.filter((h) => esRelevante(h, palabras)) : hits;
         const relevantes = coinciden.length > 0 ? coinciden : hits;
 
         return {

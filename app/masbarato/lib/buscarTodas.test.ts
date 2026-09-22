@@ -18,7 +18,7 @@ describe("buscarEnTienda", () => {
 
     expect(evento.deCache).toBe(false);
     expect(buscar).toHaveBeenCalledTimes(1);
-    expect(cache.leer("Falsa|acetaminofen|3|filtrado")).toEqual({
+    expect(cache.leer("Falsa|acetaminofen|3")).toEqual({
       tienda: "Falsa",
       resultados: [],
     });
@@ -46,24 +46,6 @@ describe("buscarEnTienda", () => {
     expect(evento.deCache).toBe(false);
     expect(evento.respuesta.error).toBe("boom");
     expect(evento.respuesta.resultados).toEqual([]);
-  });
-
-  it("pasa las opciones al adaptador y cachea modo crudo aparte del filtrado", async () => {
-    const buscar = vi
-      .fn()
-      .mockResolvedValueOnce({ tienda: "Falsa", resultados: [{ nombre: "filtrado" }] })
-      .mockResolvedValueOnce({ tienda: "Falsa", resultados: [{ nombre: "crudo" }] });
-    const adaptador = adaptadorFalso(buscar);
-    const cache = crearCache<RespuestaTienda>();
-
-    const filtrada = await buscarEnTienda(adaptador, "aceite", 3, cache);
-    const cruda = await buscarEnTienda(adaptador, "aceite", 3, cache, { crudo: true });
-
-    expect(buscar).toHaveBeenCalledTimes(2);
-    expect(buscar).toHaveBeenNthCalledWith(1, "aceite", 3, {});
-    expect(buscar).toHaveBeenNthCalledWith(2, "aceite", 3, { crudo: true });
-    expect(filtrada.respuesta.resultados).toEqual([{ nombre: "filtrado" }]);
-    expect(cruda.respuesta.resultados).toEqual([{ nombre: "crudo" }]);
   });
 
   it("no cachea una respuesta con error, para poder reintentar en la siguiente búsqueda", async () => {

@@ -55,10 +55,11 @@ anónimo dispare ese tráfico desde la app.
    de error genérico sin recargar la página.
 2. Con sesión activa, `/masbarato` muestra un panel lateral con el
    buscador, un control segmentado con el número de resultados por
-   tienda (equivalente a `--limite`, por defecto 3) y una casilla por
-   tienda (`GET /api/masbarato/tiendas`) para incluirla o excluirla de
-   la búsqueda; todas empiezan seleccionadas y el botón "Comparar" se
-   deshabilita si se deseleccionan todas.
+   tienda (equivalente a `--limite`, por defecto 3; opciones 3/5/10/30)
+   y una casilla por tienda (`GET /api/masbarato/tiendas`) para incluirla
+   o excluirla de la búsqueda — con atajos "Todas"/"Ninguna" para no
+   tener que marcarlas una por una; todas empiezan seleccionadas y el
+   botón "Comparar" se deshabilita si se deseleccionan todas.
 3. Al buscar, el cliente llama a `app/api/masbarato/buscar/route.ts`
    (`POST { termino, limite, tiendas? }`, donde `tiendas` es la lista de
    nombres seleccionados — si viene vacía o ausente se busca en todas),
@@ -99,58 +100,25 @@ anónimo dispare ese tráfico desde la app.
 7. Un botón de "Cerrar sesión" visible en la propia página de la
    herramienta.
 
-## Búsqueda mejorada con IA (opt-in, beta)
-Cada adaptador filtra localmente los resultados que no contienen todas las
-palabras significativas del término (`esRelevante` en cada adaptador,
-ver tabla de tiendas), porque el buscador remoto (Algolia, autocompletado,
-etc.) puede aflojar la búsqueda y devolver productos sin relación real —
-pero ese filtro exige coincidencia de texto **literal**, así que también
-descarta coincidencias genuinas con otra forma (género/número/sinónimo:
-"paños húmedos" en el término vs. "Toallitas Húmedas" en el nombre real
-del producto — bug confirmado en vivo contra Farmatodo). El modo IA
-reemplaza ese filtro de texto por uno de similitud semántica, corrido
-enteramente en el navegador del usuario, no en el servidor.
-
-- **Opt-in, apagado por defecto**: un switch "Búsqueda mejorada con IA
-  (beta)" en el panel de búsqueda. El usuario decide activarlo; la
-  elección se guarda en `localStorage` (`masbarato:modoIA`) y persiste
-  entre visitas (`ComparadorPrecios.tsx`, con `useSyncExternalStore` para
-  evitar parpadeo de hidratación — mismo patrón que `ThemeToggle`).
-- **Servidor**: cuando el cliente manda `modoIA: true` en el body de
-  `POST /api/masbarato/buscar`, la ruta ignora el `limite` pedido y usa
-  uno fijo más grande (`LIMITE_MAXIMO_IA = 20`) y pasa `{ crudo: true }`
-  a `crearFlujoBusqueda` → cada adaptador. Con `crudo: true`, el
-  adaptador se salta su filtro de texto literal y devuelve los
-  candidatos tal cual los ordenó la tienda (`Adaptador.buscar` acepta un
-  tercer parámetro opcional `OpcionesBusqueda`, ver
-  `adaptadores/tipos.ts`). Excepción: en Cruz Verde el tope de
-  candidatos sale del propio `limite` (no hay un tope fijo aparte), así
-  que ahí el modo IA también implica más llamadas HTTP para traer la
-  imagen de cada candidato adicional — un tradeoff conocido, no un bug.
-  La caché de cada tienda distingue modo crudo de modo filtrado (mismo
-  término/límite, resultados distintos) para no pisarse entre sí.
-- **Cliente**: por cada evento NDJSON que llega (uno por tienda), si
-  `modoIA` está activo, `rerankearPorSimilitud` (`lib/ia/similitud.ts`)
-  calcula un embedding del término buscado y de cada candidato
-  (`marca + nombre`) con un modelo que corre en el propio navegador vía
-  `@xenova/transformers` (ya usado en `transcribir-audio`), descarta los
-  que no llegan a un umbral mínimo de similitud coseno y ordena de mayor
-  a menor antes de recortar a los `limite` que el usuario pidió — ese
-  recorte final sigue siendo el número que el usuario eligió en
-  "Resultados por tienda" (3/5/10), no el `LIMITE_MAXIMO_IA` interno.
-- **Modelo**: `Xenova/paraphrase-multilingual-MiniLM-L12-v2` (~120 MB,
-  incluye español), se descarga una sola vez por sesión del navegador y
-  queda en caché del propio `@xenova/transformers` entre búsquedas y
-  visitas — no se re-descarga a menos que el usuario limpie datos del
-  sitio. Mientras descarga, se muestra una barra de progreso (mismo
-  patrón visual que `AudioTranscriber.tsx`).
-- **Por qué no todas las tiendas se benefician igual**: en adaptadores
-  cuyo índice está ordenado por precio y no por relevancia (Alkosto), un
-  término sin coincidencias reales puede devolver productos baratos de
-  cualquier categoría — antes se descartaban por el filtro literal
-  (correcto ahí, ver comentario en `alkosto.ts`); en modo IA ese filtro
-  se salta, pero el propio umbral de similitud semántica del cliente
-  cumple ese mismo rol de filtro, así que sigue siendo seguro saltarlo.
+> Nota histórica: se exploró un modo de "búsqueda mejorada con IA"
+> (opt-in, beta) que corría un modelo de embeddings en el navegador para
+> reemplazar el filtro de texto literal de cada adaptador por similitud
+> semántica, con la idea de detectar coincidencias como "paños húmedos"
+> (término buscado) vs. "Toallitas Húmedas" (nombre real del producto en
+> Farmatodo), que el filtro literal no reconoce. Se revirtió por completo
+> tras encontrar, con pruebas en vivo contra datos reales de varias
+> tiendas, que ni un solo modelo de embeddings ni un pipeline en dos
+> etapas (embeddings + reranker) superaban de forma confiable el
+> comportamiento del filtro literal existente — en más de un caso el
+> modelo semántico enterraba productos genuinamente relevantes por debajo
+> de resultados sin relación (ej. comida húmeda para mascotas rankeada
+> por encima de toallitas húmedas reales), y el pipeline de dos etapas
+> añadía ~400 MB de descarga y varios segundos de espera por tienda sin
+> resolver el problema de fondo. La lección que sí queda: cuando el
+> filtro literal por palabras no encuentra nada, mejor mostrar los
+> resultados sin filtrar (que ya trae el orden de relevancia de la propia
+> tienda) que un vacío o un reordenamiento por un modelo genérico poco
+> confiable — ver el patrón de fallback en cada adaptador VTEX/Farmatodo.
 
 ## Tiendas soportadas (adaptadores a portar)
 | Tienda | Tipo | Notas de la versión Python a preservar |
@@ -159,7 +127,7 @@ enteramente en el navegador del usuario, no en el servidor.
 | La Rebaja | VTEX | Mismo adaptador que Olímpica. |
 | Dro. Inglesa | VTEX | Mismo adaptador. |
 | Farmatodo | Algolia (`api-search.farmatodo.com`) | Acepta la consulta completa (sin tokenizar). Precio = mínimo entre `fullPrice`/`fullPriceByCity` (por ciudad, `CIUDAD = "BOG"`) y `offerPrice` si es > 0; `primePrice` se ignora por no ser comparable. |
-| Cruz Verde | REST propia, tres llamadas (`search-suggestions` → `product-summary` → `detail` por producto) | **Sin el fallback de Playwright** (decisión tomada): solo las vías con `requests`/`fetch` puro — sesión de invitado vía `SESION_URL`, reintento tras 401. Si no se logra sesión, la tienda devuelve error "sin sesión" como cualquier otro fallo, en vez de bloquear la búsqueda completa. La URL del producto se arma con `pageURL` (de `product-summary`) más el ID: `https://www.cruzverde.com.co/{pageURL}/{id}.html`. La imagen no viene en `product-summary`; hay que pedirla aparte a `product-service/products/detail/{id}` (la misma ruta que usa la ficha de producto del sitio), que no admite varios IDs a la vez — se pide en paralelo solo para los resultados ya recortados a `limite`, no para todos los candidatos de la búsqueda. `search-suggestions` es un endpoint de autocompletado (pensado para texto parcial), no de búsqueda de texto completo: con términos de varias palabras aplica su propia corrección ortográfica y puede sugerir productos sin ninguna relación real (confirmado en vivo: "aceite de oliva" corrige "aceite" a "active" y sugiere un protector solar). Por eso, tras `product-summary`, se descartan localmente las sugerencias cuyo nombre+marca no contengan todas las palabras significativas del término (`palabrasSignificativas` en `adaptadores/tokenizar.ts`); si ninguna sobrevive, la tienda responde "sin resultados" en vez de mostrar algo sin relación. |
+| Cruz Verde | REST propia, tres llamadas (`search-suggestions` → `product-summary` → `detail` por producto) | **Sin el fallback de Playwright** (decisión tomada): solo las vías con `requests`/`fetch` puro — sesión de invitado vía `SESION_URL`, reintento tras 401. Si no se logra sesión, la tienda devuelve error "sin sesión" como cualquier otro fallo, en vez de bloquear la búsqueda completa. La URL del producto se arma con `pageURL` (de `product-summary`) más el ID: `https://www.cruzverde.com.co/{pageURL}/{id}.html`. La imagen no viene en `product-summary`; hay que pedirla aparte a `product-service/products/detail/{id}` (la misma ruta que usa la ficha de producto del sitio), que no admite varios IDs a la vez — se pide en paralelo solo para los resultados ya recortados a `limite`, no para todos los candidatos de la búsqueda. `search-suggestions` es un endpoint de autocompletado (pensado para texto parcial), no de búsqueda de texto completo: con términos de varias palabras aplica su propia corrección ortográfica y puede sugerir productos sin ninguna relación real (confirmado en vivo: "aceite de oliva" corrige "aceite" a "active" y sugiere un protector solar). Por eso, tras `product-summary`, se descartan localmente las sugerencias cuyo nombre+marca no contengan todas las palabras significativas del término (`palabrasSignificativas` en `adaptadores/tokenizar.ts`); si ninguna sobrevive, la tienda responde "sin resultados" en vez de mostrar algo sin relación. `search-suggestions` responde HTTP 400 ("limit must not be greater than 10") si se le pide más de 10 sugerencias — confirmado en vivo al subir el máximo de "Resultados por tienda" a 30 en la UI —, así que esta tienda nunca pide más de 10 (`LIMITE_MAXIMO_SUGERENCIAS` en `cruzverde.ts`), a diferencia de las demás tiendas que sí escalan con `limite`. |
 | Farmavida | Buscador ajax del tema Flatsome (WordPress + WooCommerce), `/wp-admin/admin-ajax.php?action=flatsome_ajax_search_products` | Añadida después de la primera versión; no estaba en el script Python. Acepta la consulta completa (sin tokenizar). El precio viene como HTML: si el producto está en oferta, el vigente está en `<ins>` y el tachado en `<del>`; se toma siempre el de `<ins>` cuando existe. **El endpoint no reporta stock**, así que `disponible` se asume `true` siempre — no hay forma de distinguir "agotado" de "sin dato" con lo que devuelve. Un resultado con `id: -1` y `value: "No se han encontrado productos."` significa cero resultados, no un producto; se filtra por `type === "Product"`. |
 | La Economía | Plataforma Instaleap; `GET /search?name={término}` con header `RSC: 1` sobre el propio sitio (no hay API GraphQL pública con precio) | Añadida después de la primera versión. El GraphQL que usa el cliente (`nextgentheadless.instaleap.io`) solo expone sugerencias de autocompletado (sin precio) y analítica; el listado con precio/stock se resuelve enteramente en el servidor y se envía como React Server Component. Pidiendo la misma ruta con el header `RSC: 1` se obtiene ese payload sin sesión ni CORS. Se parsea línea por línea (formato `id:valorJSON` de Next.js) identificando productos por tener a la vez `sku`, `price` y `name`, en vez de reconstruir el árbol completo — más simple y resistente a cambios de estructura. Precio efectivo = `promotionPricePerSubUnit` si hay promoción activa y es menor que `price`. URL del producto: `https://www.droguerialaeconomia.com/p/{slug}`. Es la respuesta más pesada de todas las tiendas (~700 KB por búsqueda), por ser el propio árbol de la página y no un JSON compacto. La lógica de parseo del formato flight es compartida (`adaptadores/instaleap.ts`, `crearAdaptadorInstaleap`); este adaptador solo aporta el fetch con el certificado intermedio faltante. |
 | Carulla | VTEX, igual que Olímpica | Primer supermercado añadido al comparador (antes solo droguerías). Mismo adaptador VTEX, con `baseUrl` `https://www.carulla.com/io` (el catálogo está proxyado bajo ese prefijo, a diferencia de Olímpica que lo expone en la raíz). No se detectó variación de precio/stock por ciudad o sales channel en el endpoint de búsqueda. |
