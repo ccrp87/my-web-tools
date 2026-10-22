@@ -50,6 +50,13 @@ describe("parsearPayloadFlight + parsearProducto", () => {
     );
   });
 
+  it("un precio de 0 (producto sin stock real) se reporta como ausente, no como $0", () => {
+    const sinPrecioReal = { name: "X", sku: "1", price: 0, isAvailable: false };
+    const mapa = new Map<string, unknown>();
+
+    expect(parsearProducto(sinPrecioReal, mapa, TIENDA, ORIGEN).precio).toBeNull();
+  });
+
   it("no confunde una referencia de chunk inexistente con una imagen real", () => {
     const producto = {
       name: "Y",

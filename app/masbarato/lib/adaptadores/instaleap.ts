@@ -109,11 +109,17 @@ function esRelevante(p: ProductoInstaleap, palabras: string[]): boolean {
   return palabras.every((palabra) => texto.includes(palabra));
 }
 
-function precioEfectivo(p: ProductoInstaleap): number {
+/**
+ * Un precio de 0 (o negativo) no es un precio real: Instaleap lo reporta así
+ * para productos sin disponibilidad/stock en el payload, y tomarlo tal cual
+ * haría que ese producto ganara como "el más barato" de toda la búsqueda.
+ */
+function precioEfectivo(p: ProductoInstaleap): number | null {
   const promo = p.promotionPricePerSubUnit;
-  return typeof promo === "number" && promo > 0 && promo < p.price
-    ? promo
-    : p.price;
+  if (typeof promo === "number" && promo > 0 && promo < p.price) {
+    return promo;
+  }
+  return p.price > 0 ? p.price : null;
 }
 
 /**

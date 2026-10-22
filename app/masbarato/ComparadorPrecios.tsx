@@ -226,9 +226,12 @@ export function ComparadorPrecios(): React.JSX.Element {
     tiendas.length > 0 && tiendas.every((t) => tiendasExcluidas.has(t));
 
   const todosLosResultados = listaRespuestas.flatMap((r) => r.resultados);
+  // Un precio de 0 o negativo nunca es real (algunas tiendas lo reportan así
+  // para productos sin stock): se descarta igual que un precio ausente, para
+  // que no gane por error como "el más barato".
   const precios = todosLosResultados
     .map((r) => r.precio)
-    .filter((p): p is number => p !== null);
+    .filter((p): p is number => p !== null && p > 0);
   const stats = {
     total: todosLosResultados.length,
     minimo: precios.length > 0 ? Math.min(...precios) : null,

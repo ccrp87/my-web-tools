@@ -48,9 +48,12 @@ function elegirComparador(
 
 /** El más barato entre los disponibles; si ninguno está disponible, el más barato de todos. */
 export function calcularMejor(respuestas: RespuestaTienda[]): Resultado | null {
+  // Un precio de 0 o negativo no es un precio real (algunas tiendas lo
+  // reportan así para productos sin stock): se descarta igual que un precio
+  // ausente, para que no gane por error como "el más barato".
   const conPrecio = respuestas
     .flatMap((r) => r.resultados)
-    .filter((r): r is ResultadoConPrecio => r.precio !== null);
+    .filter((r): r is ResultadoConPrecio => r.precio !== null && r.precio > 0);
 
   if (conPrecio.length === 0) {
     return null;
