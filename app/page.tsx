@@ -32,6 +32,12 @@ const TOOLS: readonly Tool[] = [
       "Calcula tu fecha de reintegro, aprovecha los festivos de Colombia y genera el texto para tu solicitud.",
   },
   {
+    href: "/diagramas-mermaid",
+    name: "Editor de diagramas Mermaid",
+    description:
+      "Escribe código Mermaid y visualiza el diagrama en tiempo real, con ejemplos y exportación a SVG o PNG.",
+  },
+  {
     href: "/masbarato",
     name: "MásBarato",
     description:
