@@ -38,10 +38,10 @@ const TOOLS: readonly Tool[] = [
       "Escribe código Mermaid y visualiza el diagrama en tiempo real, con ejemplos y exportación a SVG o PNG.",
   },
   {
-    href: "/masbarato",
-    name: "MásBarato",
+    href: "/dbml",
+    name: "Editor de diagramas DBML",
     description:
-      "Compara precio y disponibilidad de un producto entre varias droguerías y supermercados colombianos. Requiere inicio de sesión.",
+      "Escribe un esquema en DBML y visualiza su diagrama entidad-relación en tiempo real, al estilo dbdiagram.io.",
   },
 ];
 
@@ -75,6 +75,15 @@ export default function Home() {
             </Link>
           ))}
         </div>
+
+        <footer className="flex gap-4 text-sm text-zinc-500 dark:text-zinc-400">
+          <Link href="/politica" className="underline hover:no-underline">
+            Política de privacidad
+          </Link>
+          <Link href="/servicios" className="underline hover:no-underline">
+            Condiciones del servicio
+          </Link>
+        </footer>
       </main>
     </div>
   );
