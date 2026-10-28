@@ -522,9 +522,8 @@ export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPrev
       return () => observer.disconnect();
     }, []);
 
-    const CONTAINER_CHROME_PX: number = 40;
-    const minDisplayWidth: number = Math.max(0, viewportSize.width - CONTAINER_CHROME_PX) / zoom;
-    const minDisplayHeight: number = Math.max(0, viewportSize.height - CONTAINER_CHROME_PX) / zoom;
+    const minDisplayWidth: number = viewportSize.width / zoom;
+    const minDisplayHeight: number = viewportSize.height / zoom;
     const displayWidth: number = Math.max(canvasWidth, minDisplayWidth);
     const displayHeight: number = Math.max(canvasHeight, minDisplayHeight);
 
@@ -891,7 +890,7 @@ export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPrev
         onClick={handleContainerClick}
         onContextMenu={handleContainerContextMenu}
         style={{ userSelect: "none", WebkitUserSelect: "none" }}
-        className="no-scrollbar relative h-full min-h-80 w-full flex-1 overflow-auto rounded-xl border border-black/[.08] bg-white p-4 dark:border-white/[.145] dark:bg-zinc-950"
+        className="no-scrollbar relative h-full min-h-80 w-full flex-1 overflow-auto rounded-xl border border-black/[.08] bg-white dark:border-white/[.145] dark:bg-zinc-950"
       >
         <div className="absolute right-3 top-3 z-20 flex items-center gap-1 rounded-lg border border-black/[.08] bg-white/90 p-1 shadow-sm backdrop-blur-sm dark:border-white/[.145] dark:bg-zinc-900/90">
           <button
@@ -939,14 +938,14 @@ export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPrev
         {errorMessage && (
           <div
             role="alert"
-            className="whitespace-pre-wrap rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300"
+            className="m-4 whitespace-pre-wrap rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300"
           >
             {errorMessage}
           </div>
         )}
 
         {!errorMessage && !hasContent && (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          <p className="m-4 text-sm text-zinc-500 dark:text-zinc-400">
             Escribe DBML para ver aquí el diagrama.
           </p>
         )}

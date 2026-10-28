@@ -6,6 +6,7 @@ import {
   CloudDownloadIcon,
   CloudIcon,
   CloudUploadIcon,
+  DatabaseImportIcon,
   FramePlusIcon,
   LibraryIcon,
   PanelIcon,
@@ -22,6 +23,7 @@ interface DiagramToolbarProps {
   isEditorCollapsed: boolean;
   onToggleEditor: () => void;
   onRequestFileUpload: () => void;
+  onOpenImportSql: () => void;
   onCopyCode: () => void;
   copyState: CopyState;
   onDownloadSvg: () => void;
@@ -126,6 +128,7 @@ export function DiagramToolbar({
   isEditorCollapsed,
   onToggleEditor,
   onRequestFileUpload,
+  onOpenImportSql,
   onCopyCode,
   copyState,
   onDownloadSvg,
@@ -175,6 +178,13 @@ export function DiagramToolbar({
           />
           {libraryPanel}
         </div>
+
+        <IconButton
+          icon={<DatabaseImportIcon />}
+          label="Importar SQL"
+          title="Importar un esquema desde SQL (Postgres, MySQL, MariaDB o SQL Server)"
+          onClick={onOpenImportSql}
+        />
 
         <Divider />
 

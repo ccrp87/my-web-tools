@@ -15,6 +15,7 @@ import {
   downloadSvgMarkup,
   downloadTextFile,
 } from "./exportDiagram";
+import { ImportSqlModal } from "./ImportSqlModal";
 import { buildDiagramFileName, buildSqlFileName } from "./lib/download";
 import { DEFAULT_DBML_EXAMPLE } from "./lib/examples";
 import {
@@ -32,6 +33,8 @@ import type { DbmlSchema } from "./lib/parser/types";
 import { serializeDbml } from "./lib/serializer/serializeDbml";
 import { generateSql } from "./lib/sql/generateSql";
 import type { SqlDialect } from "./lib/sql/generateSql";
+import { parseSqlImport } from "./lib/sqlImport/parseSqlImport";
+import type { SqlImportDialect } from "./lib/sqlImport/types";
 
 const STORAGE_KEY: string = "diagramas-dbml:code";
 const CODE_CHANGE_EVENT: string = "diagramas-dbml-code-change";
@@ -113,6 +116,8 @@ export function DbmlEditor(): React.JSX.Element {
   const [isEditorCollapsed, setIsEditorCollapsed] = useState<boolean>(false);
   const [savedDiagrams, setSavedDiagrams] = useState<SavedDiagram[]>([]);
   const [isLibraryOpen, setIsLibraryOpen] = useState<boolean>(false);
+  const [isImportSqlOpen, setIsImportSqlOpen] = useState<boolean>(false);
+  const [importSqlError, setImportSqlError] = useState<string | null>(null);
   const [saveToDriveState, setSaveToDriveState] = useState<DriveActionState>("idle");
   const [openFromDriveState, setOpenFromDriveState] = useState<DriveActionState>("idle");
   const [openDriveFile, setOpenDriveFile] = useState<DrivePickedFile | null>(null);
@@ -214,6 +219,47 @@ export function DbmlEditor(): React.JSX.Element {
   const handleRequestFileUpload = useCallback((): void => {
     fileInputRef.current?.click();
   }, []);
+
+  const handleOpenImportSql = useCallback((): void => {
+    setImportSqlError(null);
+    setIsImportSqlOpen(true);
+  }, []);
+
+  const handleCloseImportSql = useCallback((): void => {
+    setIsImportSqlOpen(false);
+    setImportSqlError(null);
+  }, []);
+
+  const handleImportSql = useCallback(
+    (sql: string, dialect: SqlImportDialect): void => {
+      const result = parseSqlImport(sql, dialect);
+      if (!result.ok) {
+        setImportSqlError(result.error);
+        return;
+      }
+
+      const isDirty: boolean = code !== lastLoadedExampleCode;
+      if (isDirty) {
+        const confirmed: boolean = window.confirm(
+          "Esto reemplazará el código actual por el esquema importado. ¿Continuar?",
+        );
+        if (!confirmed) return;
+      }
+
+      const nextCode: string = serializeDbml(result.schema);
+      writeStoredCode(nextCode);
+      setLastLoadedExampleCode(nextCode);
+      setOpenDriveFile(null);
+      setExportError(null);
+      setIsImportSqlOpen(false);
+      setImportSqlError(null);
+
+      if (result.schema.warnings.length > 0) {
+        window.alert(`Se importó con algunos avisos:\n\n${result.schema.warnings.join("\n")}`);
+      }
+    },
+    [code, lastLoadedExampleCode],
+  );
 
   const handleFileSelected = useCallback(
     (event: ChangeEvent<HTMLInputElement>): void => {
@@ -588,6 +634,7 @@ export function DbmlEditor(): React.JSX.Element {
         isEditorCollapsed={isEditorCollapsed}
         onToggleEditor={() => setIsEditorCollapsed((current) => !current)}
         onRequestFileUpload={handleRequestFileUpload}
+        onOpenImportSql={handleOpenImportSql}
         onCopyCode={handleCopyCode}
         copyState={copyState}
         onDownloadDbml={handleDownloadDbml}
@@ -619,6 +666,10 @@ export function DbmlEditor(): React.JSX.Element {
         onToggleAutoSync={handleToggleAutoSync}
         autoSyncState={autoSyncState}
       />
+
+      {isImportSqlOpen && (
+        <ImportSqlModal onClose={handleCloseImportSql} onImport={handleImportSql} error={importSqlError} />
+      )}
 
       <input
         ref={fileInputRef}

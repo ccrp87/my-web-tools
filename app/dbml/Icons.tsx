@@ -122,6 +122,27 @@ export function CloudIcon(): React.JSX.Element {
   );
 }
 
+export function CloseIcon(): React.JSX.Element {
+  return (
+    <svg {...ICON_PROPS}>
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+export function DatabaseImportIcon(): React.JSX.Element {
+  return (
+    <svg {...ICON_PROPS}>
+      <ellipse cx="12" cy="5" rx="8" ry="3" />
+      <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+      <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
+      <path d="M12 10v8" />
+      <path d="M9 15l3 3 3-3" />
+    </svg>
+  );
+}
+
 export function TrashIcon(): React.JSX.Element {
   return (
     <svg {...ICON_PROPS}>
