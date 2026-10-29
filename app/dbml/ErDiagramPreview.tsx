@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
+import { DeleteRefModal } from "./DeleteRefModal";
 import { buildEditTargetKey, EditPopover } from "./EditPopover";
 import type { AreaEditPatch, ColumnEditPatch, EditTarget, TableEditPatch } from "./EditPopover";
 import {
@@ -22,7 +23,8 @@ import {
 import type { GroupBounds, PositionOverride, RefPath, RefSide, TableBox } from "./lib/erLayout";
 import { getPalette } from "./lib/palette";
 import type { ErPalette } from "./lib/palette";
-import type { DbmlCardinality, DbmlColumn, DbmlSchema, DbmlTable } from "./lib/parser/types";
+import type { DbmlCardinality, DbmlColumn, DbmlRef, DbmlSchema, DbmlTable } from "./lib/parser/types";
+import { areColumnTypesCompatible } from "./lib/typeCompatibility";
 
 export interface ErDiagramDimensions {
   width: number;
@@ -51,6 +53,9 @@ interface ErDiagramPreviewProps {
     targetTable: string,
     targetColumn: string,
   ) => void;
+  onCreateRefWithNewColumn: (sourceTable: string, sourceColumn: string, targetTable: string) => void;
+  onDeleteRef: (ref: DbmlRef, alsoDeleteColumn: boolean) => void;
+  onAddColumn: (tableName: string) => void;
 }
 
 const ZOOM_STEP: number = 0.2;
@@ -63,6 +68,7 @@ const ROW_HEIGHT: number = DEFAULT_LAYOUT_CONFIG.rowHeight;
 const CORNER_RADIUS: number = 8;
 const DRAG_THRESHOLD_PX: number = 4;
 const GRID_SIZE: number = 20;
+const AREA_OVERLAP_MARGIN: number = 12;
 const POSITIONS_STORAGE_KEY: string = "diagramas-dbml:positions";
 
 function useIsDarkTheme(): boolean {
@@ -144,10 +150,13 @@ function EndpointMarker({
 function RefConnector({
   path,
   palette,
+  onClick,
 }: {
   path: RefPath;
   palette: ErPalette;
+  onClick: (event: ReactMouseEvent<SVGPathElement>) => void;
 }): React.JSX.Element {
+  const [isHovered, setIsHovered] = useState<boolean>(false);
   const horizontalDistance: number = Math.max(40, Math.abs(path.to.x - path.from.x) / 2);
   const control1X: number =
     path.fromSide === "right" ? path.from.x + horizontalDistance : path.from.x - horizontalDistance;
@@ -156,8 +165,22 @@ function RefConnector({
   const d: string = `M ${path.from.x} ${path.from.y} C ${control1X} ${path.from.y}, ${control2X} ${path.to.y}, ${path.to.x} ${path.to.y}`;
 
   return (
-    <g>
-      <path d={d} fill="none" stroke={palette.relationLine} strokeWidth={1.5} />
+    <g onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
+      <path
+        d={d}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={10}
+        className="cursor-pointer"
+        onClick={onClick}
+      />
+      <path
+        d={d}
+        fill="none"
+        stroke={isHovered ? SELECTION_OUTLINE_COLOR : palette.relationLine}
+        strokeWidth={isHovered ? 2.5 : 1.5}
+        pointerEvents="none"
+      />
       <EndpointMarker
         x={path.from.x}
         y={path.from.y}
@@ -188,9 +211,14 @@ interface TableBoxGroupProps {
     column: DbmlColumn,
     event: ReactMouseEvent<SVGCircleElement>,
   ) => void;
+  onAddColumn: (table: DbmlTable) => void;
+  connectDragInfo: ConnectDragRenderInfo | null;
+  previewHeaderColor: string | null;
 }
 
 const SELECTION_OUTLINE_COLOR: string = "#3b82f6";
+const CONNECT_DRAG_VALID_COLOR: string = "#22c55e";
+const CONNECT_DRAG_INVALID_COLOR: string = "#ef4444";
 
 function TableBoxGroup({
   box,
@@ -200,8 +228,12 @@ function TableBoxGroup({
   onHeaderDoubleClick,
   onColumnClick,
   onColumnHandleMouseDown,
+  onAddColumn,
+  connectDragInfo,
+  previewHeaderColor,
 }: TableBoxGroupProps): React.JSX.Element {
-  const headerFill: string = box.table.headerColor ?? palette.headerBackground;
+  const isConnectDragActive: boolean = connectDragInfo !== null;
+  const headerFill: string = previewHeaderColor ?? box.table.headerColor ?? palette.headerBackground;
 
   return (
     <g transform={`translate(${box.x}, ${box.y})`}>
@@ -249,6 +281,10 @@ function TableBoxGroup({
       {box.table.columns.map((column, index) => {
         const rowY: number = HEADER_HEIGHT + index * ROW_HEIGHT;
         const textY: number = rowY + ROW_HEIGHT / 2;
+        const isDragSource: boolean =
+          connectDragInfo?.sourceTable === box.table.name && connectDragInfo.sourceColumnName === column.name;
+        const isHoverTarget: boolean =
+          connectDragInfo?.hoverTable === box.table.name && connectDragInfo.hoverColumnName === column.name;
 
         return (
           <g
@@ -260,6 +296,23 @@ function TableBoxGroup({
             onDoubleClick={(event) => onColumnClick(box.table, column, event)}
           >
             <rect x={0} y={rowY} width={box.width} height={ROW_HEIGHT} fill="transparent" />
+            {(isDragSource || isHoverTarget) && (
+              <rect
+                x={0}
+                y={rowY}
+                width={box.width}
+                height={ROW_HEIGHT}
+                fill={
+                  isHoverTarget
+                    ? connectDragInfo!.hoverValid
+                      ? CONNECT_DRAG_VALID_COLOR
+                      : CONNECT_DRAG_INVALID_COLOR
+                    : palette.foreignKeyAccent
+                }
+                fillOpacity={isHoverTarget ? 0.22 : 0.12}
+                pointerEvents="none"
+              />
+            )}
             {index > 0 && (
               <line
                 x1={0}
@@ -271,9 +324,7 @@ function TableBoxGroup({
               />
             )}
             {column.isPrimaryKey && (
-              <text x={9} y={textY} dominantBaseline="middle" fontSize={11}>
-                🔑
-              </text>
+              <circle cx={14} cy={textY} r={3.5} fill={palette.primaryKeyAccent} />
             )}
             {!column.isPrimaryKey && column.isForeignKey && (
               <circle
@@ -310,7 +361,7 @@ function TableBoxGroup({
               cy={textY}
               r={4}
               fill={palette.relationLine}
-              className="cursor-crosshair opacity-0 hover:opacity-100"
+              className="cursor-crosshair opacity-20 transition-opacity hover:opacity-100"
               onMouseDown={(event) => onColumnHandleMouseDown(box.table, column, event)}
             />
             <circle
@@ -318,12 +369,43 @@ function TableBoxGroup({
               cy={textY}
               r={4}
               fill={palette.relationLine}
-              className="cursor-crosshair opacity-0 hover:opacity-100"
+              className="cursor-crosshair opacity-20 transition-opacity hover:opacity-100"
               onMouseDown={(event) => onColumnHandleMouseDown(box.table, column, event)}
             />
           </g>
         );
       })}
+
+      {(() => {
+        const rowY: number = HEADER_HEIGHT + box.table.columns.length * ROW_HEIGHT;
+        const textY: number = rowY + ROW_HEIGHT / 2;
+        const isHoverTarget: boolean = connectDragInfo?.hoverTable === box.table.name && connectDragInfo.isHoverAddColumn;
+
+        return (
+          <g
+            className="cursor-pointer"
+            data-add-column-row="true"
+            data-table={box.table.name}
+            onClick={(event) => {
+              event.stopPropagation();
+              onAddColumn(box.table);
+            }}
+          >
+            <rect
+              x={0}
+              y={rowY}
+              width={box.width}
+              height={ROW_HEIGHT}
+              fill={isHoverTarget ? CONNECT_DRAG_VALID_COLOR : palette.rowDivider}
+              className={isHoverTarget ? "opacity-25 transition-opacity" : "opacity-0 transition-opacity hover:opacity-60"}
+            />
+            <line x1={0} y1={rowY} x2={box.width} y2={rowY} stroke={palette.rowDivider} strokeWidth={1} />
+            <text x={26} y={textY} dominantBaseline="middle" fontSize={12} fill={palette.columnTypeText}>
+              {isConnectDragActive ? "+ Crear relación" : "+ Añadir columna"}
+            </text>
+          </g>
+        );
+      })()}
     </g>
   );
 }
@@ -334,12 +416,14 @@ function AreaBox({
   bounds,
   onMouseDown,
   onDoubleClick,
+  previewColor,
 }: {
   bounds: GroupBounds;
   onMouseDown: (event: ReactMouseEvent<SVGGElement>) => void;
   onDoubleClick: (event: ReactMouseEvent<SVGGElement>) => void;
+  previewColor: string | null;
 }): React.JSX.Element {
-  const color: string = bounds.group.color ?? DEFAULT_AREA_COLOR;
+  const color: string = previewColor ?? bounds.group.color ?? DEFAULT_AREA_COLOR;
 
   return (
     <g className="cursor-move" onMouseDown={onMouseDown} onDoubleClick={onDoubleClick}>
@@ -371,11 +455,27 @@ interface DragState {
   hasMoved: boolean;
 }
 
-interface ConnectDragPoint {
+type ConnectDragHoverTarget =
+  | { kind: "column"; table: string; column: string }
+  | { kind: "addColumn"; table: string };
+
+export interface ConnectDragRenderInfo {
+  sourceTable: string;
+  sourceColumnName: string;
+  hoverTable: string | null;
+  hoverColumnName: string | null;
+  isHoverAddColumn: boolean;
+  hoverValid: boolean;
+}
+
+interface ConnectDragState {
+  sourceTable: string;
+  sourceColumn: DbmlColumn;
   fromX: number;
   fromY: number;
   toX: number;
   toY: number;
+  hover: ConnectDragHoverTarget | null;
 }
 
 interface MarqueeRect {
@@ -400,7 +500,18 @@ function rectsIntersect(
 
 export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPreviewProps>(
   function ErDiagramPreview(
-    { schema, errorMessage, onUpdateTable, onUpdateColumn, onUpdateArea, onDeleteArea, onCreateRef },
+    {
+      schema,
+      errorMessage,
+      onUpdateTable,
+      onUpdateColumn,
+      onUpdateArea,
+      onDeleteArea,
+      onCreateRef,
+      onCreateRefWithNewColumn,
+      onDeleteRef,
+      onAddColumn,
+    },
     ref,
   ) {
     const isDarkTheme: boolean = useIsDarkTheme();
@@ -409,18 +520,30 @@ export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPrev
     const containerRef = useRef<HTMLDivElement | null>(null);
     const [zoom, setZoom] = useState<number>(1);
     const zoomRef = useRef<number>(zoom);
+    const schemaRef = useRef<DbmlSchema | null>(schema);
+    useEffect(() => {
+      schemaRef.current = schema;
+    }, [schema]);
     const [positionOverrides, setPositionOverrides] = useState<Record<string, PositionOverride>>({});
     const dragStateRef = useRef<DragState | null>(null);
     const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
     const [editPosition, setEditPosition] = useState<{ x: number; y: number } | null>(null);
-    const [connectDrag, setConnectDrag] = useState<ConnectDragPoint | null>(null);
+    const [connectDrag, setConnectDrag] = useState<ConnectDragState | null>(null);
     const [selectedTables, setSelectedTables] = useState<ReadonlySet<string>>(new Set());
     const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
     const [showGrid, setShowGrid] = useState<boolean>(false);
+    const [pendingDeleteRef, setPendingDeleteRef] = useState<DbmlRef | null>(null);
+    const [previewColor, setPreviewColor] = useState<string | null>(null);
 
     useEffect(() => {
       zoomRef.current = zoom;
     }, [zoom]);
+
+    // Cualquier cambio de objetivo del popover (abrir otro, o cerrarlo)
+    // invalida la previsualización de color que pudiera haber en curso.
+    useEffect(() => {
+      setPreviewColor(null);
+    }, [editTarget]);
 
     /**
      * Ctrl/Cmd+rueda del mouse (o el gesto de pellizco de un trackpad, que el
@@ -470,8 +593,11 @@ export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPrev
 
     const baseLayout = useMemo(() => (schema ? computeErLayout(schema) : null), [schema]);
     const layout = useMemo(
-      () => (baseLayout ? applyPositionOverrides(baseLayout, positionOverrides) : null),
-      [baseLayout, positionOverrides],
+      () =>
+        baseLayout
+          ? applyPositionOverrides(baseLayout, positionOverrides, schema?.tableGroups ?? [])
+          : null,
+      [baseLayout, positionOverrides, schema],
     );
     const refPaths = useMemo(
       () => (schema && layout ? computeRefPaths(schema, layout) : []),
@@ -481,6 +607,55 @@ export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPrev
       () => (schema && layout ? computeGroupBounds(schema.tableGroups, layout) : []),
       [schema, layout],
     );
+
+    /**
+     * Resume el estado de arrastre de "crear relación" en la forma que
+     * necesitan las filas de columna/el botón "añadir columna" para
+     * pintarse: qué fila está siendo sobrevolada y si soltar ahí crearía
+     * una relación válida (mismo tipo de dato) o no.
+     */
+    const connectDragInfo: ConnectDragRenderInfo | null = useMemo(() => {
+      if (!connectDrag) return null;
+
+      const hover = connectDrag.hover;
+      if (!hover) {
+        return {
+          sourceTable: connectDrag.sourceTable,
+          sourceColumnName: connectDrag.sourceColumn.name,
+          hoverTable: null,
+          hoverColumnName: null,
+          isHoverAddColumn: false,
+          hoverValid: false,
+        };
+      }
+
+      if (hover.kind === "addColumn") {
+        return {
+          sourceTable: connectDrag.sourceTable,
+          sourceColumnName: connectDrag.sourceColumn.name,
+          hoverTable: hover.table,
+          hoverColumnName: null,
+          isHoverAddColumn: true,
+          hoverValid: true,
+        };
+      }
+
+      const isSelf = hover.table === connectDrag.sourceTable && hover.column === connectDrag.sourceColumn.name;
+      const targetType = schema?.tables
+        .find((table) => table.name === hover.table)
+        ?.columns.find((column) => column.name === hover.column)?.type;
+      const hoverValid =
+        !isSelf && targetType !== undefined && areColumnTypesCompatible(connectDrag.sourceColumn.type, targetType);
+
+      return {
+        sourceTable: connectDrag.sourceTable,
+        sourceColumnName: connectDrag.sourceColumn.name,
+        hoverTable: hover.table,
+        hoverColumnName: hover.column,
+        isHoverAddColumn: false,
+        hoverValid,
+      };
+    }, [connectDrag, schema]);
 
     const contentWidth: number = Math.max(
       layout?.width ?? 0,
@@ -706,6 +881,72 @@ export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPrev
           window.removeEventListener("mouseup", handleMouseUp);
           activeDragListenersRef.current = null;
           dragStateRef.current = null;
+
+          if (!drag.hasMoved) return;
+          const currentSchema = schemaRef.current;
+          if (!currentSchema) return;
+
+          // Si al soltar la tabla queda superpuesta con un área a la que no
+          // pertenece, se empuja justo afuera (por el eje que requiera menor
+          // desplazamiento) para que la pertenencia siga siendo clara con solo
+          // mirar el diagrama. Se recalcula el layout aquí (en vez de usar el
+          // `layout` cerrado al iniciar el arrastre) porque ya quedó obsoleto
+          // tras los cambios de posición hechos durante el propio arrastre.
+          setPositionOverrides((current) => {
+            const resolvedLayout = applyPositionOverrides(
+              computeErLayout(currentSchema),
+              current,
+              currentSchema.tableGroups,
+            );
+            const groupBounds = computeGroupBounds(currentSchema.tableGroups, resolvedLayout);
+            const boxByName = new Map(resolvedLayout.tableBoxes.map((b) => [b.table.name, b]));
+
+            let next = current;
+
+            for (const tableName of groupTableNames) {
+              const box = boxByName.get(tableName);
+              if (!box) continue;
+
+              const memberOfAreas = new Set(
+                currentSchema.tableGroups
+                  .filter((group) => group.tables.includes(tableName))
+                  .map((group) => group.name),
+              );
+
+              let correctedX: number = box.x;
+              let correctedY: number = box.y;
+
+              for (const bounds of groupBounds) {
+                if (memberOfAreas.has(bounds.group.name)) continue;
+                const rect = { x: correctedX, y: correctedY, width: box.width, height: box.height };
+                const areaRect = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+                if (!rectsIntersect(rect, areaRect)) continue;
+
+                const pushLeft: number = rect.x + rect.width - areaRect.x;
+                const pushRight: number = areaRect.x + areaRect.width - rect.x;
+                const pushUp: number = rect.y + rect.height - areaRect.y;
+                const pushDown: number = areaRect.y + areaRect.height - rect.y;
+                const minPush: number = Math.min(pushLeft, pushRight, pushUp, pushDown);
+
+                if (minPush === pushLeft) correctedX = areaRect.x - rect.width - AREA_OVERLAP_MARGIN;
+                else if (minPush === pushRight) correctedX = areaRect.x + areaRect.width + AREA_OVERLAP_MARGIN;
+                else if (minPush === pushUp) correctedY = areaRect.y - rect.height - AREA_OVERLAP_MARGIN;
+                else correctedY = areaRect.y + areaRect.height + AREA_OVERLAP_MARGIN;
+              }
+
+              if (correctedX !== box.x || correctedY !== box.y) {
+                next = {
+                  ...next,
+                  [tableName]: {
+                    x: correctedX - resolvedLayout.shiftX,
+                    y: correctedY - resolvedLayout.shiftY,
+                  },
+                };
+              }
+            }
+
+            return next;
+          });
         }
 
         activeDragListenersRef.current = { move: handleMouseMove, up: handleMouseUp };
@@ -752,6 +993,15 @@ export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPrev
      * de hacer la geometría a mano, porque así funciona sin importar el zoom
      * o el desplazamiento actual del contenedor.
      */
+    const handleRefClick = useCallback(
+      (ref: DbmlRef, event: ReactMouseEvent<SVGPathElement>): void => {
+        event.stopPropagation();
+        setEditTarget(null);
+        setPendingDeleteRef(ref);
+      },
+      [],
+    );
+
     const handleColumnHandleMouseDown = useCallback(
       (table: DbmlTable, column: DbmlColumn, event: ReactMouseEvent<SVGCircleElement>): void => {
         event.preventDefault();
@@ -760,38 +1010,74 @@ export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPrev
 
         const start = clientPointToContentPoint(event.clientX, event.clientY);
         if (!start) return;
-        setConnectDrag({ fromX: start.x, fromY: start.y, toX: start.x, toY: start.y });
+        setConnectDrag({
+          sourceTable: table.name,
+          sourceColumn: column,
+          fromX: start.x,
+          fromY: start.y,
+          toX: start.x,
+          toY: start.y,
+          hover: null,
+        });
+
+        function resolveHoverTarget(clientX: number, clientY: number): ConnectDragHoverTarget | null {
+          const element = document.elementFromPoint(clientX, clientY) as Element | null;
+
+          const columnRow = element?.closest('[data-column-row="true"]');
+          if (columnRow) {
+            const targetTable = columnRow.getAttribute("data-table");
+            const targetColumn = columnRow.getAttribute("data-column");
+            if (targetTable && targetColumn) return { kind: "column", table: targetTable, column: targetColumn };
+          }
+
+          const addColumnRow = element?.closest('[data-add-column-row="true"]');
+          if (addColumnRow) {
+            const targetTable = addColumnRow.getAttribute("data-table");
+            if (targetTable) return { kind: "addColumn", table: targetTable };
+          }
+
+          return null;
+        }
 
         function handleMouseMove(moveEvent: MouseEvent): void {
           const point = clientPointToContentPoint(moveEvent.clientX, moveEvent.clientY);
-          if (!point) return;
-          setConnectDrag((current) => (current ? { ...current, toX: point.x, toY: point.y } : current));
+          const hover = resolveHoverTarget(moveEvent.clientX, moveEvent.clientY);
+          setConnectDrag((current) =>
+            current
+              ? { ...current, toX: point?.x ?? current.toX, toY: point?.y ?? current.toY, hover }
+              : current,
+          );
         }
 
         function handleMouseUp(upEvent: MouseEvent): void {
           window.removeEventListener("mousemove", handleMouseMove);
           window.removeEventListener("mouseup", handleMouseUp);
           activeDragListenersRef.current = null;
+
+          const hover = resolveHoverTarget(upEvent.clientX, upEvent.clientY);
           setConnectDrag(null);
+          if (!hover) return;
 
-          const dropTarget = (document.elementFromPoint(upEvent.clientX, upEvent.clientY) as Element | null)?.closest(
-            '[data-column-row="true"]',
-          );
-          if (!dropTarget) return;
+          if (hover.kind === "addColumn") {
+            onCreateRefWithNewColumn(table.name, column.name, hover.table);
+            return;
+          }
 
-          const targetTable = dropTarget.getAttribute("data-table");
-          const targetColumn = dropTarget.getAttribute("data-column");
-          if (!targetTable || !targetColumn) return;
-          if (targetTable === table.name && targetColumn === column.name) return;
+          if (hover.table === table.name && hover.column === column.name) return;
 
-          onCreateRef(table.name, column.name, targetTable, targetColumn);
+          const targetType = schema?.tables
+            .find((candidate) => candidate.name === hover.table)
+            ?.columns.find((candidate) => candidate.name === hover.column)?.type;
+          if (targetType === undefined || !areColumnTypesCompatible(column.type, targetType)) return;
+
+          onCreateRef(table.name, column.name, hover.table, hover.column);
         }
 
         activeDragListenersRef.current = { move: handleMouseMove, up: handleMouseUp };
         window.addEventListener("mousemove", handleMouseMove);
         window.addEventListener("mouseup", handleMouseUp);
       },
-      [clientPointToContentPoint, onCreateRef],
+      [clientPointToContentPoint, onCreateRef, onCreateRefWithNewColumn, schema],
     );
 
     const openAreaEditPopover = useCallback(
@@ -853,6 +1139,74 @@ export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPrev
           window.removeEventListener("mousemove", handleMouseMove);
           window.removeEventListener("mouseup", handleMouseUp);
           activeDragListenersRef.current = null;
+
+          if (!hasMoved) return;
+          const currentSchema = schemaRef.current;
+          if (!currentSchema) return;
+
+          // Inverso de la corrección al arrastrar una tabla: aquí lo que se
+          // mueve es el área completa (sus tablas miembro, como grupo), así
+          // que si queda superpuesta con una tabla que NO es miembro, se
+          // empuja el grupo entero (una sola traslación) afuera.
+          setPositionOverrides((current) => {
+            const resolvedLayout = applyPositionOverrides(
+              computeErLayout(currentSchema),
+              current,
+              currentSchema.tableGroups,
+            );
+            const groupBoundsNow = computeGroupBounds(currentSchema.tableGroups, resolvedLayout);
+            const movedAreaBounds = groupBoundsNow.find((candidate) => candidate.group.name === bounds.group.name);
+            if (!movedAreaBounds) return current;
+
+            const memberSet = new Set(bounds.group.tables);
+            let areaRect = {
+              x: movedAreaBounds.x,
+              y: movedAreaBounds.y,
+              width: movedAreaBounds.width,
+              height: movedAreaBounds.height,
+            };
+            let deltaX: number = 0;
+            let deltaY: number = 0;
+
+            for (const box of resolvedLayout.tableBoxes) {
+              if (memberSet.has(box.table.name)) continue;
+              const otherRect = { x: box.x, y: box.y, width: box.width, height: box.height };
+              if (!rectsIntersect(areaRect, otherRect)) continue;
+
+              const pushLeft: number = areaRect.x + areaRect.width - otherRect.x;
+              const pushRight: number = otherRect.x + otherRect.width - areaRect.x;
+              const pushUp: number = areaRect.y + areaRect.height - otherRect.y;
+              const pushDown: number = otherRect.y + otherRect.height - areaRect.y;
+              const minPush: number = Math.min(pushLeft, pushRight, pushUp, pushDown);
+
+              let stepX: number = 0;
+              let stepY: number = 0;
+              if (minPush === pushLeft) stepX = -(pushLeft + AREA_OVERLAP_MARGIN);
+              else if (minPush === pushRight) stepX = pushRight + AREA_OVERLAP_MARGIN;
+              else if (minPush === pushUp) stepY = -(pushUp + AREA_OVERLAP_MARGIN);
+              else stepY = pushDown + AREA_OVERLAP_MARGIN;
+
+              deltaX += stepX;
+              deltaY += stepY;
+              areaRect = { ...areaRect, x: areaRect.x + stepX, y: areaRect.y + stepY };
+            }
+
+            if (deltaX === 0 && deltaY === 0) return current;
+
+            let next = current;
+            for (const tableName of bounds.group.tables) {
+              const box = resolvedLayout.tableBoxes.find((candidate) => candidate.table.name === tableName);
+              if (!box) continue;
+              next = {
+                ...next,
+                [tableName]: {
+                  x: box.x + deltaX - resolvedLayout.shiftX,
+                  y: box.y + deltaY - resolvedLayout.shiftY,
+                },
+              };
+            }
+            return next;
+          });
         }
 
         activeDragListenersRef.current = { move: handleMouseMove, up: handleMouseUp };
@@ -997,13 +1351,19 @@ export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPrev
                     bounds={bounds}
                     onMouseDown={(event) => handleAreaMouseDown(bounds, event)}
                     onDoubleClick={(event) => handleAreaDoubleClick(bounds, event)}
+                    previewColor={
+                      editTarget?.kind === "area" && editTarget.group.name === bounds.group.name
+                        ? previewColor
+                        : null
+                    }
                   />
                 ))}
-                {refPaths.map((path) => (
+                {refPaths.map((path, index) => (
                   <RefConnector
-                    key={`${path.ref.left.table}.${path.ref.left.column}->${path.ref.right.table}.${path.ref.right.column}`}
+                    key={`${index}:${path.ref.left.table}.${path.ref.left.column}->${path.ref.right.table}.${path.ref.right.column}`}
                     path={path}
                     palette={palette}
+                    onClick={(event) => handleRefClick(path.ref, event)}
                   />
                 ))}
                 {layout.tableBoxes.map((box) => (
@@ -1016,6 +1376,13 @@ export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPrev
                     onHeaderDoubleClick={handleHeaderDoubleClick}
                     onColumnClick={handleColumnClick}
                     onColumnHandleMouseDown={handleColumnHandleMouseDown}
+                    onAddColumn={(table) => onAddColumn(table.name)}
+                    connectDragInfo={connectDragInfo}
+                    previewHeaderColor={
+                      editTarget?.kind === "table" && editTarget.table.name === box.table.name
+                        ? previewColor
+                        : null
+                    }
                   />
                 ))}
                 {marqueeRect && (
@@ -1034,7 +1401,13 @@ export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPrev
                     y1={connectDrag.fromY}
                     x2={connectDrag.toX}
                     y2={connectDrag.toY}
-                    stroke={palette.foreignKeyAccent}
+                    stroke={
+                      !connectDragInfo?.hoverTable
+                        ? palette.foreignKeyAccent
+                        : connectDragInfo.hoverValid
+                          ? CONNECT_DRAG_VALID_COLOR
+                          : CONNECT_DRAG_INVALID_COLOR
+                    }
                     strokeWidth={2}
                     strokeDasharray="6 4"
                     pointerEvents="none"
@@ -1067,6 +1440,29 @@ export const ErDiagramPreview = forwardRef<ErDiagramPreviewHandle, ErDiagramPrev
             onDeleteArea={(areaName) => {
               onDeleteArea(areaName);
               setEditTarget(null);
+            }}
+            onPreviewColor={setPreviewColor}
+          />
+        )}
+
+        {pendingDeleteRef && (
+          <DeleteRefModal
+            sourceLabel={`${pendingDeleteRef.left.table}.${pendingDeleteRef.left.column}`}
+            targetLabel={`${pendingDeleteRef.right.table}.${pendingDeleteRef.right.column}`}
+            fkTableName={
+              (pendingDeleteRef.left.cardinality === "many" ? pendingDeleteRef.left : pendingDeleteRef.right).table
+            }
+            fkColumnName={
+              (pendingDeleteRef.left.cardinality === "many" ? pendingDeleteRef.left : pendingDeleteRef.right).column
+            }
+            onCancel={() => setPendingDeleteRef(null)}
+            onDeleteRefOnly={() => {
+              onDeleteRef(pendingDeleteRef, false);
+              setPendingDeleteRef(null);
+            }}
+            onDeleteRefAndColumn={() => {
+              onDeleteRef(pendingDeleteRef, true);
+              setPendingDeleteRef(null);
             }}
           />
         )}

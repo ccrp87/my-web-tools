@@ -63,10 +63,10 @@ describe("computeTableBoxSize", () => {
     expect(diff).toBeCloseTo(DEFAULT_LAYOUT_CONFIG.rowHeight * 2, 5);
   });
 
-  it("una tabla sin columnas ocupa al menos una fila de alto", () => {
+  it("una tabla sin columnas ocupa al menos una fila de alto, más la franja de 'añadir columna'", () => {
     const empty = makeTable({ columns: [] });
     expect(computeTableBoxSize(empty).height).toBe(
-      DEFAULT_LAYOUT_CONFIG.headerHeight + DEFAULT_LAYOUT_CONFIG.rowHeight,
+      DEFAULT_LAYOUT_CONFIG.headerHeight + DEFAULT_LAYOUT_CONFIG.rowHeight * 2,
     );
   });
 });

@@ -56,7 +56,9 @@ export function computeTableBoxSize(
 
   const width = Math.max(config.minTableWidth, titleWidth, widestRow);
   const rowCount = Math.max(1, table.columns.length);
-  const height = config.headerHeight + rowCount * config.rowHeight;
+  // + 1 fila: franja inferior fija para el control "añadir columna", presente
+  // en toda tabla sin importar cuántas columnas tenga.
+  const height = config.headerHeight + (rowCount + 1) * config.rowHeight;
 
   return { width, height };
 }
@@ -221,11 +223,13 @@ export interface PositionOverride {
  * a mano, y expande el tamaño del lienzo si alguna quedó fuera de los
  * límites originales (p. ej. al arrastrarla hacia la derecha).
  *
- * Si alguna tabla quedó en coordenadas negativas (arrastrada por encima o a
- * la izquierda del origen), todo el lienzo se desplaza (`shiftX`/`shiftY`)
- * para que esa tabla vuelva a caer dentro del área visible y se pueda
- * alcanzar haciendo scroll — de lo contrario quedaría recortada fuera del
- * `viewBox`, sin forma de desplazarse hasta coordenadas negativas.
+ * Si alguna tabla (o el área que la envuelve, que se extiende más allá de
+ * sus tablas miembro por el padding y el alto de la etiqueta) quedó en
+ * coordenadas negativas al arrastrarla por encima o a la izquierda del
+ * origen, todo el lienzo se desplaza (`shiftX`/`shiftY`) para que vuelva a
+ * caer dentro del área visible — de lo contrario quedaría recortada fuera
+ * del `viewBox`, o (si solo se recortara el área sin mover también la
+ * tabla) el título del área quedaría tapado por la propia tabla.
  * `overrides` siempre se interpreta en el espacio de coordenadas SIN
  * desplazar (el mismo que produce `computeErLayout`), para que este
  * desplazamiento no se acumule entre renders sucesivos.
@@ -233,6 +237,7 @@ export interface PositionOverride {
 export function applyPositionOverrides(
   layout: ErLayout,
   overrides: Readonly<Record<string, PositionOverride>>,
+  tableGroups: readonly DbmlTableGroup[] = [],
 ): ErLayout {
   if (Object.keys(overrides).length === 0) return layout;
 
@@ -241,8 +246,22 @@ export function applyPositionOverrides(
     return override ? { ...box, x: override.x, y: override.y } : box;
   });
 
-  const shiftX: number = Math.max(0, -Math.min(0, ...rawBoxes.map((box) => box.x)));
-  const shiftY: number = Math.max(0, -Math.min(0, ...rawBoxes.map((box) => box.y)));
+  const rawGroupBounds: GroupBounds[] = computeGroupBounds(tableGroups, {
+    tableBoxes: rawBoxes,
+    width: 0,
+    height: 0,
+    shiftX: 0,
+    shiftY: 0,
+  });
+
+  const shiftX: number = Math.max(
+    0,
+    -Math.min(0, ...rawBoxes.map((box) => box.x), ...rawGroupBounds.map((bounds) => bounds.x)),
+  );
+  const shiftY: number = Math.max(
+    0,
+    -Math.min(0, ...rawBoxes.map((box) => box.y), ...rawGroupBounds.map((bounds) => bounds.y)),
+  );
 
   const tableBoxes: TableBox[] =
     shiftX === 0 && shiftY === 0

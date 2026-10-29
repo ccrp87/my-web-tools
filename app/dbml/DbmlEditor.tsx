@@ -29,7 +29,7 @@ import {
 import type { DrivePickedFile } from "./lib/googleDrive";
 import type { SavedDiagram } from "./lib/library";
 import { parseDbml } from "./lib/parser/parseDbml";
-import type { DbmlSchema } from "./lib/parser/types";
+import type { DbmlColumn, DbmlRef, DbmlSchema } from "./lib/parser/types";
 import { serializeDbml } from "./lib/serializer/serializeDbml";
 import { generateSql } from "./lib/sql/generateSql";
 import type { SqlDialect } from "./lib/sql/generateSql";
@@ -608,9 +608,66 @@ export function DbmlEditor(): React.JSX.Element {
     [parseResult],
   );
 
+  /**
+   * Borra una relación y, si se pide, también la columna FK del lado
+   * "muchos" (si ambos extremos son "uno", se asume el izquierdo) junto con
+   * cualquier otra relación que quedara apuntando a esa misma columna, para
+   * no dejar refs colgando.
+   */
+  const handleDeleteRef = useCallback(
+    (refToDelete: DbmlRef, alsoDeleteColumn: boolean): void => {
+      if (!parseResult.ok) return;
+
+      if (!alsoDeleteColumn) {
+        const nextSchema: DbmlSchema = {
+          ...parseResult.schema,
+          refs: parseResult.schema.refs.filter(
+            (ref) =>
+              !(
+                ref.left.table === refToDelete.left.table &&
+                ref.left.column === refToDelete.left.column &&
+                ref.right.table === refToDelete.right.table &&
+                ref.right.column === refToDelete.right.column
+              ),
+          ),
+        };
+        writeStoredCode(serializeDbml(nextSchema));
+        return;
+      }
+
+      const fkEndpoint = refToDelete.left.cardinality === "many" ? refToDelete.left : refToDelete.right;
+
+      const nextSchema: DbmlSchema = {
+        ...parseResult.schema,
+        tables: parseResult.schema.tables.map((table) =>
+          table.name === fkEndpoint.table
+            ? { ...table, columns: table.columns.filter((column) => column.name !== fkEndpoint.column) }
+            : table,
+        ),
+        refs: parseResult.schema.refs.filter(
+          (ref) =>
+            !(ref.left.table === fkEndpoint.table && ref.left.column === fkEndpoint.column) &&
+            !(ref.right.table === fkEndpoint.table && ref.right.column === fkEndpoint.column),
+        ),
+      };
+      writeStoredCode(serializeDbml(nextSchema));
+    },
+    [parseResult],
+  );
+
   const handleCreateRef = useCallback(
     (sourceTable: string, sourceColumn: string, targetTable: string, targetColumn: string): void => {
       if (!parseResult.ok) return;
+
+      const alreadyExists: boolean = parseResult.schema.refs.some(
+        (ref) =>
+          ref.left.table === sourceTable &&
+          ref.left.column === sourceColumn &&
+          ref.right.table === targetTable &&
+          ref.right.column === targetColumn,
+      );
+      if (alreadyExists) return;
+
       const nextSchema: DbmlSchema = {
         ...parseResult.schema,
         refs: [
@@ -620,6 +677,99 @@ export function DbmlEditor(): React.JSX.Element {
             right: { table: targetTable, column: targetColumn, cardinality: "one" },
           },
         ],
+      };
+      writeStoredCode(serializeDbml(nextSchema));
+    },
+    [parseResult],
+  );
+
+  /**
+   * Arrastrar desde una columna hasta el renglón "+ Crear relación" de otra
+   * tabla crea ahí una columna FK nueva (mismo tipo que la columna de
+   * origen, para que la relación sea válida por construcción) y la conecta.
+   */
+  const handleCreateRefWithNewColumn = useCallback(
+    (sourceTable: string, sourceColumn: string, targetTable: string): void => {
+      if (!parseResult.ok) return;
+      const source = parseResult.schema.tables.find((candidate) => candidate.name === sourceTable);
+      const sourceColumnDef = source?.columns.find((candidate) => candidate.name === sourceColumn);
+      const target = parseResult.schema.tables.find((candidate) => candidate.name === targetTable);
+      if (!sourceColumnDef || !target) return;
+
+      const existingNames = new Set(target.columns.map((column) => column.name));
+      const baseName = `${sourceTable}_${sourceColumn}`;
+      let name = baseName;
+      let counter = 1;
+      while (existingNames.has(name)) {
+        counter += 1;
+        name = `${baseName}_${counter}`;
+      }
+
+      const newColumn: DbmlColumn = {
+        name,
+        type: sourceColumnDef.type,
+        isPrimaryKey: false,
+        isNotNull: false,
+        isUnique: false,
+        isIncrement: false,
+        isForeignKey: true,
+        defaultValue: null,
+        note: null,
+      };
+
+      const nextSchema: DbmlSchema = {
+        ...parseResult.schema,
+        tables: parseResult.schema.tables.map((candidate) =>
+          candidate.name === targetTable
+            ? { ...candidate, columns: [...candidate.columns, newColumn] }
+            : candidate,
+        ),
+        refs: [
+          ...parseResult.schema.refs,
+          {
+            left: { table: targetTable, column: name, cardinality: "many" },
+            right: { table: sourceTable, column: sourceColumn, cardinality: "one" },
+          },
+        ],
+      };
+      writeStoredCode(serializeDbml(nextSchema));
+    },
+    [parseResult],
+  );
+
+  const handleAddColumn = useCallback(
+    (tableName: string): void => {
+      if (!parseResult.ok) return;
+      const table = parseResult.schema.tables.find((candidate) => candidate.name === tableName);
+      if (!table) return;
+
+      const existingNames = new Set(table.columns.map((column) => column.name));
+      let counter = 1;
+      let name = `columna_${counter}`;
+      while (existingNames.has(name)) {
+        counter += 1;
+        name = `columna_${counter}`;
+      }
+
+      const newColumn: DbmlColumn = {
+        name,
+        type: "varchar",
+        isPrimaryKey: false,
+        isNotNull: false,
+        isUnique: false,
+        isIncrement: false,
+        isForeignKey: false,
+        defaultValue: null,
+        note: null,
+      };
+
+      const nextSchema: DbmlSchema = {
+        ...parseResult.schema,
+        tables: parseResult.schema.tables.map((candidate) =>
+          candidate.name === tableName
+            ? { ...candidate, columns: [...candidate.columns, newColumn] }
+            : candidate,
+        ),
       };
       writeStoredCode(serializeDbml(nextSchema));
     },
@@ -710,6 +860,9 @@ export function DbmlEditor(): React.JSX.Element {
           onUpdateArea={handleUpdateArea}
           onDeleteArea={handleDeleteArea}
           onCreateRef={handleCreateRef}
+          onCreateRefWithNewColumn={handleCreateRefWithNewColumn}
+          onDeleteRef={handleDeleteRef}
+          onAddColumn={handleAddColumn}
         />
       </div>
     </div>

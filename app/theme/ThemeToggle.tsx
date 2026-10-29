@@ -76,7 +76,7 @@ export function ThemeToggle(): React.JSX.Element {
     <div
       role="group"
       aria-label="Tema visual"
-      className="fixed top-[22px] right-4 z-50 flex overflow-hidden rounded-full border border-black/[.08] bg-background/90 backdrop-blur-sm dark:border-white/[.145]"
+      className="fixed top-[22px] right-[22px] z-50 flex overflow-hidden rounded-full border border-black/[.08] bg-background/90 backdrop-blur-sm dark:border-white/[.145]"
     >
       {OPTIONS.map((option) => (
         <button
